@@ -11,7 +11,8 @@ import { notifyApprovalResolved, runAgent, instruct, askAboutStep, agentDef } fr
 import { simulateOvernight, morningBriefing } from './simulate.js';
 import { DEPARTMENTS, hireAgent } from './team.js';
 import { ensureColleagueAgents } from './colleagues.js';
-import { stt, tts, chat, MOCK, MODEL } from './mistral.js';
+import { startTask, taskForApproval, getTask, log as taskLog } from './tasks.js';
+import { stt, tts, chat, MOCK, MODEL, TASK_MODEL } from './mistral.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4100);
@@ -24,7 +25,12 @@ app.use(express.json({ limit: '25mb' }));
 
 // --- SSE stream: every state change fans out a fresh snapshot -----------------
 const clients = new Set();
-onEvent(() => { const snap = JSON.stringify(snapshot()); for (const res of clients) res.write(`event: state\ndata: ${snap}\n\n`); });
+onEvent((type, data) => {
+  const snap = JSON.stringify(snapshot());
+  // 'ui' events (an agent changing what the chat box shows) also go to the client as-is.
+  const extra = type === 'ui' && data ? `event: event\ndata: ${JSON.stringify({ type, ...data })}\n\n` : '';
+  for (const res of clients) res.write(`event: state\ndata: ${snap}\n\n` + extra);
+});
 app.get('/api/stream', (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   res.write(`event: state\ndata: ${JSON.stringify(snapshot())}\n\n`);
@@ -53,8 +59,9 @@ app.post('/api/approvals/:id/resolve', async (req, res) => {
   const r = resolveApproval(req.params.id, decision);
   if (!r.ok) return res.status(409).json(r);
   emit('state');
-  // let the agent react honestly to the decision (fire and forget)
-  notifyApprovalResolved(r.approval.agent_id, r.approval, decision).catch((e) => console.error('followup', e.message));
+  // let the agent react honestly to the decision (fire and forget); a task step that was
+  // waiting on this approval carries on by itself instead
+  if (!taskForApproval(r.approval.id)) notifyApprovalResolved(r.approval.agent_id, r.approval, decision).catch((e) => console.error('followup', e.message));
   res.json(r);
 });
 
@@ -158,6 +165,7 @@ function getOrCreateThread(agentId) {
     const id = 'th_' + Math.random().toString(36).slice(2, 9);
     q.run('INSERT INTO threads (id,agent_id,user_id,created_at) VALUES (?,?,?,?)', id, agentId, 'host', new Date().toISOString());
     t = q.get('SELECT * FROM threads WHERE id=?', id);
+    emit('state');
   }
   return t;
 }
@@ -176,11 +184,12 @@ app.post('/api/threads/:id/messages', async (req, res) => {
   emit('state');
   res.json({ ok: true, id: mid });
   // agent replies in the thread; a visual card (if any) is attached to the reply
-  const r = await runAgent(t.agent_id, `Chat thread with the host: "${text}". Reply concisely as ${agentDef(t.agent_id)?.name || t.agent_id}. If a checklist/table/timeline/chart would help, call send_visual_card before your final reply.`, { allowHiring: true });
+  const r = await runAgent(t.agent_id, `Chat thread with the host: "${text}". Reply concisely as ${agentDef(t.agent_id)?.name || t.agent_id}. If a checklist/table/timeline/chart would help, call send_visual_card before your final reply.`, { allowHiring: true, threadId: t.id, model: TASK_MODEL });
   const rid = 'tm_' + Math.random().toString(36).slice(2, 9);
   q.run('INSERT INTO thread_messages (id,thread_id,from_side,text,card,run_id,ts) VALUES (?,?,?,?,?,?,?)',
     rid, t.id, 'agent', r.final, r.card ? JSON.stringify(r.card) : null, r.runId, new Date().toISOString());
   emit('state');
+  if (r.ui?.length) emit('ui', { thread_id: t.id, agent_id: t.agent_id, actions: r.ui });
   if (voice && r.final) { // voice conversation: speak the reply back (Voxtral TTS)
     try {
       const buf = await tts(`${agentDef(t.agent_id)?.name || t.agent_id} says: ${r.final}`);
@@ -201,7 +210,7 @@ app.post('/api/threads/:id/voice-turn', async (req, res) => {
     'tm_' + Math.random().toString(36).slice(2, 9), t.id, 'host', text, new Date().toISOString());
   emit('state');
   try {
-    const r = await runAgent(t.agent_id, `Voice conversation with the host (your reply is spoken aloud): "${text}". Reply as ${name} in one to three short, natural spoken sentences. No markdown, lists or emoji.`, { allowHiring: true });
+    const r = await runAgent(t.agent_id, `Voice conversation with the host (your reply is spoken aloud): "${text}". Reply as ${name} in one to three short, natural spoken sentences. No markdown, lists or emoji.`, { allowHiring: true, threadId: t.id, model: TASK_MODEL });
     const reply = r.final || '';
     q.run('INSERT INTO thread_messages (id,thread_id,from_side,text,card,run_id,ts) VALUES (?,?,?,?,?,?,?)',
       'tm_' + Math.random().toString(36).slice(2, 9), t.id, 'agent', reply, r.card ? JSON.stringify(r.card) : null, r.runId, new Date().toISOString());
@@ -219,10 +228,29 @@ app.post('/api/threads/:id/voice-turn', async (req, res) => {
         }
       } catch (e) { tts_error = e.message; console.error('voice-turn tts', e.message); }
     }
-    res.json({ reply, audio_url, tts: audio_url ? 'voxtral' : MOCK ? 'no-key' : 'failed', tts_error });
+    res.json({ reply, audio_url, tts: audio_url ? 'voxtral' : MOCK ? 'no-key' : 'failed', tts_error, ui: r.ui || [] });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
+});
+
+// --- Agent tasks you can watch (server/tasks.js) ----------------------------------
+app.post('/api/tasks', async (req, res) => {
+  const { agent_id, goal } = req.body || {};
+  if (!agentDef(agent_id)) return res.status(404).json({ error: 'no such agent' });
+  if (!String(goal || '').trim()) return res.status(400).json({ error: 'goal required' });
+  const r = await startTask(agent_id, String(goal).trim(), req.body?.thread_id || null);
+  res.status(r.error ? 409 : 200).json(r);
+});
+app.post('/api/tasks/:id/cancel', (req, res) => {
+  const t = getTask(req.params.id);
+  if (!t) return res.status(404).json({ error: 'no such task' });
+  if (['done', 'failed', 'cancelled'].includes(t.status)) return res.json({ ok: true, status: t.status });
+  q.run("UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?", new Date().toISOString(), t.id);
+  taskLog(t.id, 'end', '■ stopped by you');
+  q.run("UPDATE agent_state SET status='idle', current_task='' WHERE agent_id=?", t.agent_id);
+  emit('state');
+  res.json({ ok: true });
 });
 
 app.post('/api/threads/:id/read', (req, res) => {

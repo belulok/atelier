@@ -15,6 +15,9 @@ for (const line of fs.readFileSync(ENV_PATH, 'utf8').split('\n')) {
 
 export const API_KEY = process.env.MISTRAL_API_KEY || '';
 export const MODEL = process.env.MISTRAL_MODEL || 'mistral-large-latest';
+// Agent tasks (plan, run each step, re-plan) use a fast non-reasoning model so the host can watch
+// steps move; mistral-large-latest now reasons first and takes far longer per call.
+export const TASK_MODEL = process.env.MISTRAL_TASK_MODEL || 'mistral-medium-latest';
 // Voxtral 3 ids per docs.mistral.ai (Studio > Audio). The 2603 TTS id is deprecated.
 export const TTS_MODEL = process.env.VOXTRAL_TTS_MODEL || 'voxtral-mini-tts-3-0';
 export const STT_MODEL = process.env.VOXTRAL_STT_MODEL || 'voxtral-mini-transcribe-3';
@@ -35,9 +38,9 @@ async function call(pathname, body, raw = false) {
 }
 
 // Chat completions with function calling.
-export async function chat({ messages, tools, toolChoice = 'auto' }) {
+export async function chat({ messages, tools, toolChoice = 'auto', model }) {
   if (MOCK) return mockChat(messages, tools);
-  const body = { model: MODEL, messages, temperature: 0.3 };
+  const body = { model: model || MODEL, messages, temperature: 0.3 };
   if (tools?.length) { body.tools = tools; body.tool_choice = toolChoice; }
   const r = await call('/chat/completions', body);
   const msg = r.choices[0].message;

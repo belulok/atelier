@@ -106,10 +106,23 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
 - Clicking empty office space (a click, not a drag) or pressing Esc closes the Simple mode popup; clicking an
   agent still opens its chat (`onEmptyClick` through `createOffice.js` → `OfficeCanvas` → `OfficeExperience` → `App`).
 
-## In progress
-- belulok · Agent tasks you can watch: talk to an agent → it plans a multi-step task, runs it step by step, and
-  you can say "show me what you're working on" (pipeline view in the chat box), "show me the CLI" (terminal view),
-  add or change things mid-task (it pauses at the next step and re-plans), and "switch me to Dev" (hand-over to
-  another agent). Demo: Mila gets Lukas ready for check-in. Files: `server/tasks.js` (new), `server/agents.js`,
-  `server/index.js`, `server/db.js`, `src/tasks/*` (new), `src/SimpleMode.jsx`, `src/voice/VoiceMode.jsx`,
-  `src/voice/voice.css`, `src/App.jsx` (SSE ui events only). Please avoid these files until this lands.
+
+## Agent tasks you can watch (done 2026-11-21, belulok)
+- Ask an agent to do a job in chat or voice ("Mila, get Lukas ready for his check-in today"). It calls `start_task`;
+  the task is planned by Mistral as 3–6 plain-English steps (goal, the instructions it follows, what to expect) and
+  runs in the background, one step at a time, with the agent's real tools (`server/tasks.js`, tables `tasks`, `task_log`).
+- "Show me what you're working on" → the chat box switches to the **Workflow** view: a task card and the steps as a
+  pipeline (done / working / waiting for your approval / not started). A step that messages a guest or touches money
+  is a Raise Hand step: the card shows the exact draft with Approve / Deny. "Show me the CLI" → **Terminal** view of the
+  same task (every tool call, result, wait and change, live). "Back to chat" → chat. Tabs do the same by hand.
+- Add or change things mid-task ("also offer a late checkout for £20"): `add_to_task` parks it; at the next safe
+  point the agent pauses, re-plans the steps it hasn't done, and carries on. If the change affects a draft that is
+  still waiting for approval, the draft is withdrawn and redone with the change (no duplicate guest message).
+- "Switch me to Theo" → `switch_agent` hands the conversation over (after the agent finishes speaking); the new agent
+  says hello. Works in voice and text.
+- Conversation and task calls use `mistral-medium-latest` (`MISTRAL_TASK_MODEL`): `mistral-large-latest` now reasons
+  first and took 20–30 s per tool decision, too slow for voice. A per-turn reminder next to the host's words makes the
+  agent actually call the tools instead of promising. Approvals in a chat turn are blocked while a task runs (the task
+  raises its own); `request_approval` rejects unknown booking ids.
+- Verified with the real key, end to end in a browser: task → workflow → late-checkout change (draft withdrawn and
+  redone in German) → terminal → Approve → 5/5 done, German reply sent → switch to Theo.

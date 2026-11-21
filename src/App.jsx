@@ -28,6 +28,7 @@ export default function App() {
   const [mode, setMode] = useState(() => { try { return localStorage.getItem('atelier-mode') || 'advanced'; } catch { return 'advanced'; } });
   const openThreadRef = useRef(null); // set by SimpleMode: open chat with an agent from the 3D office
   const [voiceReply, setVoiceReply] = useState(null);
+  const [uiEvent, setUiEvent] = useState(null); // an agent changing the Simple mode chat box
   useEffect(() => { try { localStorage.setItem('atelier-mode', mode); } catch {} }, [mode]);
   // Esc closes the Simple mode popup (clicking empty office space does too, via OfficeExperience).
   useEffect(() => {
@@ -42,6 +43,7 @@ export default function App() {
   const recognitionRef = useRef(null);
 
   useEffect(() => subscribe(setState, (ev) => {
+    if (ev?.type === 'ui') setUiEvent(ev);
     if (ev?.type === 'voice_reply') {
       setVoiceReply(ev);
       if (ev.audio_url && mode === 'advanced') { const el = audioRef.current; el.src = ev.audio_url; el.play().catch(() => speakBrowser(ev.text || '')); }
@@ -188,7 +190,7 @@ export default function App() {
           onEmptyClick={mode === 'simple' ? () => setMode('advanced') : undefined} />
         {mode === 'simple' && (
           <div className="simple-backdrop">
-            <SimpleMode state={state} voiceReply={voiceReply} onExit={() => setMode('advanced')} registerOpen={(fn) => { openThreadRef.current = fn; }} />
+            <SimpleMode state={state} voiceReply={voiceReply} uiEvent={uiEvent} onExit={() => setMode('advanced')} registerOpen={(fn) => { openThreadRef.current = fn; }} />
           </div>
         )}
         {briefing && <div className="briefing card workspace-briefing"><div className="card-title">Morning briefing <button className="x" aria-label="Close briefing" onClick={() => setBriefing(null)}>✕</button></div><p>{briefing.text}</p></div>}

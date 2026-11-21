@@ -50,3 +50,18 @@
   .vm.vm-embedded { height: calc(100dvh - 86px); min-height: 0; }
   .vm-embedded .vm-stage { width: 170px; height: 170px; }
 }
+
+/* Compact: a task screen (workflow / terminal) fills the box; the face shrinks to a strip above it. */
+.vm.vm-compact { height: min(760px, calc(92vh - 130px)); padding-top: 6px; }
+.vm-compact .vm-top { display: none; }
+.vm-strip { width: 100%; display: flex; align-items: center; gap: 14px; padding: 4px 2px 10px; }
+.vm-compact .vm-stage { width: 76px; height: 76px; margin: 0; flex-shrink: 0; }
+.vm-compact .vm-ring { inset: 6px; border-width: 3px; }
+.vm-compact .vm-face { filter: drop-shadow(0 6px 14px rgba(30, 43, 26, .18)); }
+.vm-compact .vm-stage.thinking .vm-face { animation: vm-bob 1.4s ease-in-out infinite; }
+.vm-strip-text { min-width: 0; flex: 1; }
+.vm-compact .vm-label { margin: 0; text-align: left; font-size: 14px; }
+.vm-strip-cap { font-size: 13px; color: #34422f; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vm-stagebox { width: 100%; flex: 1; min-height: 0; overflow: auto; }
+.vm-compact .vm-controls { margin-top: 10px; }
+@media (max-width: 680px) { .vm.vm-compact { height: calc(100dvh - 140px); } }

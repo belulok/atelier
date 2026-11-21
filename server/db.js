@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS workflow_events (id INTEGER PRIMARY KEY AUTOINCREMENT
 CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, agent_id TEXT, user_id TEXT DEFAULT 'host', created_at TEXT, glance_json TEXT, glance_for TEXT);
 CREATE TABLE IF NOT EXISTS thread_messages (id TEXT PRIMARY KEY, thread_id TEXT, from_side TEXT, text TEXT, card TEXT, run_id TEXT, ts TEXT);
 CREATE TABLE IF NOT EXISTS thread_reads (thread_id TEXT, user_id TEXT, ts TEXT, PRIMARY KEY (thread_id, user_id));
+-- agent tasks you can watch (server/tasks.js): a plan of steps, run one by one; task_log is the terminal view
+CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, agent_id TEXT, thread_id TEXT, title TEXT, goal TEXT, instructions TEXT, expect TEXT,
+  status TEXT, steps TEXT, additions TEXT DEFAULT '[]', result TEXT, created_at TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS task_log (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, ts TEXT, kind TEXT, text TEXT);
 `);
 // idempotency + approver on approvals (guarded for existing DBs)
 for (const col of ['idempotency_key TEXT', 'approved_by TEXT']) {
@@ -51,6 +55,7 @@ export function seed() {
   q.run('DELETE FROM cleaning_jobs'); q.run('DELETE FROM rates'); q.run('DELETE FROM approvals');
   q.run('DELETE FROM audit'); q.run('DELETE FROM agent_state'); q.run('DELETE FROM agents');
   q.run('DELETE FROM workflow_events'); q.run('DELETE FROM threads'); q.run('DELETE FROM thread_messages'); q.run('DELETE FROM thread_reads');
+  q.run('DELETE FROM tasks'); q.run('DELETE FROM task_log');
 
   const flats = [
     ['flat1', 'Flat 1 · Shoreditch Studio', 'Shoreditch, E2', 120],
@@ -128,6 +133,10 @@ export function snapshot() {
     const unread = read ? msgs.filter((m) => m.ts > read.ts && m.from_side === 'agent').length : msgs.filter((m) => m.from_side === 'agent').length;
     return { ...t, messages: msgs, last_read: read?.ts || null, unread, last_message_at: lastMsg?.ts || t.created_at };
   });
+  const tasks = q.all('SELECT * FROM tasks ORDER BY created_at DESC LIMIT 8').map((t) => ({
+    ...t, steps: parse(t.steps) || [], additions: parse(t.additions) || [],
+    log: q.all('SELECT ts, kind, text FROM task_log WHERE task_id=? ORDER BY id DESC LIMIT 150', t.id).reverse(),
+  }));
   return {
     agents,
     flats: q.all('SELECT * FROM flats'),
@@ -139,5 +148,6 @@ export function snapshot() {
     audit: q.all('SELECT * FROM audit ORDER BY id DESC LIMIT 60'),
     workflow,
     threads,
+    tasks,
   };
 }

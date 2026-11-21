@@ -8,6 +8,7 @@ import { emit } from './events.js';
 import { chat, MOCK } from './mistral.js';
 import { createApproval, clearHand, ALLOWED_TYPES } from './approvals.js';
 import { DEPARTMENTS, hireAgent } from './team.js';
+import { HOST_TOOLS, HOST_TOOL_NAMES, runHostTool, taskContext, officeRoster, restingState, activeTask } from './tasks.js';
 
 export const DEFAULT_AGENTS = {
   mila: { name: 'Mila', role: 'Guest Concierge', department: 'Guest Experience', system: `You are Mila, the Guest Concierge for a solo London Airbnb host. You reply to guests in the guest's own language (check bookings.guest_lang). You read and triage guest messages. You NEVER send a message to a guest, issue a refund/discount, change a price or grant early check-in without the host's approval — call request_approval with a clear summary and the exact reply text in payload.reply. Only report actions that actually happened (tool results tell you). Be warm, concise, professional.` },
@@ -100,7 +101,7 @@ function overview() {
   };
 }
 
-async function executeTool(agentId, runId, name, args) {
+export async function executeTool(agentId, runId, name, args) {
   const t0 = Date.now();
   let out;
   switch (name) {
@@ -110,6 +111,11 @@ async function executeTool(agentId, runId, name, args) {
     case 'get_rates': out = q.all('SELECT * FROM rates WHERE flat_id=? ORDER BY date LIMIT 14', args.flat_id); break;
     case 'request_approval': {
       if (!ALLOWED_TYPES.has(args.type)) { out = { error: 'type not allowed: ' + args.type }; break; }
+      const bid = args.payload?.booking_id;
+      if (bid && !q.get('SELECT id FROM bookings WHERE id=?', bid)) {
+        out = { error: `No booking with id "${bid}". Use a real booking id: ${q.all('SELECT id, guest_name FROM bookings').map((b) => `${b.id} (${b.guest_name})`).join(', ')}.` };
+        break;
+      }
       const approval = createApproval(agentId, args);
       out = { pending: true, approval_id: approval.id, status: 'awaiting_host_approval', note: 'Raised hand. Do NOT claim the action happened — it is pending until the host approves.' };
       break;
@@ -174,6 +180,15 @@ function setMemory(agentId, mem) {
   q.run('UPDATE agent_state SET memory=? WHERE agent_id=?', JSON.stringify(cleanMemory(cleanMemory(mem).slice(-14))), agentId);
 }
 
+// A reminder next to the host's words in each conversation turn: models follow it far more
+// reliably there than in the system prompt.
+function turnHint(agentId) {
+  const t = activeTask(agentId);
+  return t
+    ? `\n[You are running the task "${t.title}" (${t.status}). If this message adds to or changes it, call add_to_task before replying. If they ask what you're working on or to see it, call show_screen.]`
+    : `\n[If the host is asking you to do a job, call start_task before replying.]`;
+}
+
 // One agent turn: Mistral chat-completions loop with tools, max 6 iterations.
 export async function runAgent(agentId, userPrompt, opts = {}) {
   const def = agentDef(agentId);
@@ -183,16 +198,22 @@ export async function runAgent(agentId, userPrompt, opts = {}) {
   setAgent(agentId, { status: 'working', current_task: userPrompt.slice(0, 60), run_id: runId, run_until: new Date(Date.now() + 120e3).toISOString(), behavior: 'auto', behavior_until: null, raise_label: null });
   wf(agentId, runId, 'task_received', 'start', { prompt: userPrompt.slice(0, 300) }, null, null, 'active');
   const memory = getMemory(agentId);
+  // Conversations the host started also get the task tools (start/add/show/switch).
+  const host = !!opts.allowHiring;
+  const hostNote = host ? `\nOther agents in the office: ${officeRoster(agentId)}.
+Working with the host: when the host asks you to DO a job (e.g. get a guest ready for check-in, sort out a booking, prepare a reply), you MUST call start_task in this same turn, before you answer; it plans and runs the job step by step in the background. Never say you will do something without calling the tool for it now. If a task is running and the host adds or changes anything about it ("also…", "actually…", "make it…"), you MUST call add_to_task in this same turn (never start a second task for it). When they ask what you're working on or to see the steps, call show_screen with "workflow"; for the CLI, terminal, logs or commands, "terminal"; to go back, "chat". When they want to talk to another agent, call switch_agent.
+${taskContext(agentId)}` : '';
   const messages = [
-    { role: 'system', content: def.system + `\nToday: ${new Date().toISOString().slice(0, 10)}. You are one of the agents in the host's AI back office (Atelier). Tools read/write only the host's data.` },
+    { role: 'system', content: def.system + `\nToday: ${new Date().toISOString().slice(0, 10)}. You are one of the agents in the host's AI back office (Atelier). Tools read/write only the host's data.` + hostNote },
     ...memory,
-    { role: 'user', content: userPrompt },
+    { role: 'user', content: userPrompt + (host ? turnHint(agentId) : '') },
   ];
   let awaitingApproval = false, card = null, final = '';
+  const ui = []; // chat-box actions from host tools (show a screen, switch agent)
   try {
     for (let i = 0; i < 6; i++) {
       const t0 = Date.now();
-      const msg = await chat({ messages, tools: opts.allowHiring ? [...TOOLS, HIRE_TOOL] : TOOLS });
+      const msg = await chat({ messages, tools: host ? [...TOOLS, HIRE_TOOL, ...HOST_TOOLS] : TOOLS, model: opts.model });
       wf(agentId, runId, `llm_step_${i + 1}`, 'llm', { model: 'mistral' }, msg.tool_calls?.length ? { tool_calls: msg.tool_calls.map(c => c.function.name) } : { reply: (msg.content || '').slice(0, 300) }, Date.now() - t0, 'done');
       messages.push(msg);
       if (!msg.tool_calls?.length) {
@@ -200,12 +221,23 @@ export async function runAgent(agentId, userPrompt, opts = {}) {
         setMemory(agentId, messages); // includes this final reply; tool steps are filtered out
         audit(agentId, 'note', `📝 ${final.slice(0, 140)}`);
         wf(agentId, runId, 'final_reply', 'end', null, { text: final.slice(0, 300) }, null, 'done');
-        setAgent(agentId, { status: 'idle', current_task: '', run_id: null, run_until: null, last_reply_at: new Date().toISOString(), last_reply_title: final.slice(0, 60) });
-        return { final, awaitingApproval: false, card, runId };
+        setAgent(agentId, { ...restingState(agentId), run_id: null, run_until: null, last_reply_at: new Date().toISOString(), last_reply_title: final.slice(0, 60) });
+        return { final, awaitingApproval: false, card, runId, ui };
       }
       for (const call of msg.tool_calls) {
         let args; try { args = JSON.parse(call.function.arguments || '{}'); } catch { args = {}; }
-        const result = await executeTool(agentId, runId, call.function.name, args);
+        let result;
+        if (host && call.function.name === 'request_approval' && activeTask(agentId)) {
+          // the running task raises its own approvals, step by step; don't raise a second one here
+          result = { error: 'Your running task asks the host for approval in its own step. Use add_to_task to change what it does.' };
+        } else if (host && HOST_TOOL_NAMES.has(call.function.name)) {
+          const t0 = Date.now();
+          const r = await runHostTool(agentId, call.function.name, args, { threadId: opts.threadId });
+          result = r.out; if (r.ui) ui.push(r.ui);
+          wf(agentId, runId, call.function.name, 'tool', args, result, Date.now() - t0, result?.error ? 'error' : 'done');
+        } else {
+          result = await executeTool(agentId, runId, call.function.name, args);
+        }
         if (call.function.name === 'request_approval' && result.pending) awaitingApproval = true;
         if (call.function.name === 'send_visual_card' && result.card) card = result.card;
         messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify(result).slice(0, 2000) });
@@ -214,7 +246,7 @@ export async function runAgent(agentId, userPrompt, opts = {}) {
         final = 'Raised a hand and waiting for the host — the action is pending, not done.';
         wf(agentId, runId, 'approval_requested', 'end', null, { status: 'awaiting_host_approval' }, null, 'active');
         setMemory(agentId, [...messages, { role: 'assistant', content: final }]);
-        return { final, awaitingApproval: true, card, runId };
+        return { final, awaitingApproval: true, card, runId, ui };
       }
     }
     // Six steps without a final reply: say so rather than claim success.
@@ -227,10 +259,10 @@ export async function runAgent(agentId, userPrompt, opts = {}) {
     final = `Sorry, I couldn't finish that because of an error: ${e.message.slice(0, 160)}`;
   } finally {
     if (!awaitingApproval && q.get('SELECT status FROM agent_state WHERE agent_id=?', agentId)?.status !== 'needs_approval') {
-      setAgent(agentId, { status: 'idle', current_task: '', run_id: null, run_until: null });
+      setAgent(agentId, { ...restingState(agentId), run_id: null, run_until: null });
     }
   }
-  return { final, awaitingApproval, card, runId };
+  return { final, awaitingApproval, card, runId, ui };
 }
 
 // Voice / chat instruction entry point (F4/F5).
