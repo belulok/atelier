@@ -40,7 +40,13 @@ export async function chat({ messages, tools, toolChoice = 'auto' }) {
   const body = { model: MODEL, messages, temperature: 0.3 };
   if (tools?.length) { body.tools = tools; body.tool_choice = toolChoice; }
   const r = await call('/chat/completions', body);
-  return r.choices[0].message;
+  const msg = r.choices[0].message;
+  // Mistral can return content as a list of chunks (text, and reasoning for some models).
+  // The app works with plain text, so keep only the text chunks.
+  if (Array.isArray(msg.content)) {
+    msg.content = msg.content.filter((c) => c?.type === 'text' && typeof c.text === 'string').map((c) => c.text).join('');
+  }
+  return msg;
 }
 
 // Voxtral TTS: POST /v1/audio/speech -> mp3. The docs return the audio base64-encoded

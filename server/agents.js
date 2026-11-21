@@ -113,11 +113,23 @@ function setAgent(agentId, patch) {
   emit('state');
 }
 
+// Memory between runs keeps only plain conversation turns (host messages and the agent's
+// text replies). Tool calls and tool results can't be replayed without their ids:
+// Mistral rejects them with "Tool call id has to be defined". Cleaning on read also
+// repairs memory saved before this fix.
+function cleanMemory(mem) {
+  const out = (Array.isArray(mem) ? mem : [])
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.tool_calls?.length
+      && typeof m.content === 'string' && m.content.trim() && m.content !== 'null')
+    .map((m) => ({ role: m.role, content: m.content }));
+  while (out.length && out[0].role !== 'user') out.shift();
+  return out;
+}
 export function getMemory(agentId) {
-  try { return JSON.parse(q.get('SELECT memory FROM agent_state WHERE agent_id=?', agentId)?.memory || '[]'); } catch { return []; }
+  try { return cleanMemory(JSON.parse(q.get('SELECT memory FROM agent_state WHERE agent_id=?', agentId)?.memory || '[]')); } catch { return []; }
 }
 function setMemory(agentId, mem) {
-  q.run('UPDATE agent_state SET memory=? WHERE agent_id=?', JSON.stringify(mem.slice(-14)), agentId);
+  q.run('UPDATE agent_state SET memory=? WHERE agent_id=?', JSON.stringify(cleanMemory(cleanMemory(mem).slice(-14))), agentId);
 }
 
 // One agent turn: Mistral chat-completions loop with tools, max 6 iterations.
@@ -143,7 +155,7 @@ export async function runAgent(agentId, userPrompt, opts = {}) {
       messages.push(msg);
       if (!msg.tool_calls?.length) {
         final = msg.content || '(no text)';
-        setMemory(agentId, [...messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) })), { role: 'assistant', content: final }]);
+        setMemory(agentId, messages); // includes this final reply; tool steps are filtered out
         audit(agentId, 'note', `📝 ${final.slice(0, 140)}`);
         wf(agentId, runId, 'final_reply', 'end', null, { text: final.slice(0, 300) }, null, 'done');
         setAgent(agentId, { status: 'idle', current_task: '', run_id: null, run_until: null, last_reply_at: new Date().toISOString(), last_reply_title: final.slice(0, 60) });
@@ -159,20 +171,24 @@ export async function runAgent(agentId, userPrompt, opts = {}) {
       if (awaitingApproval) {
         final = 'Raised a hand and waiting for the host — the action is pending, not done.';
         wf(agentId, runId, 'approval_requested', 'end', null, { status: 'awaiting_host_approval' }, null, 'active');
-        setMemory(agentId, [...messages.filter((m) => m.role !== 'system' && m.role !== 'tool').map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) })), { role: 'assistant', content: final }]);
+        setMemory(agentId, [...messages, { role: 'assistant', content: final }]);
         return { final, awaitingApproval: true, card, runId };
       }
     }
+    // Six steps without a final reply: say so rather than claim success.
+    final = 'I ran out of steps before finishing, so nothing more was done. Could you break it into a smaller request?';
   } catch (e) {
     console.error('agent loop error', agentId, e);
     wf(agentId, runId, 'error', 'end', null, { error: e.message }, null, 'error');
     audit(agentId, 'note', `⚠️ ${e.message}`);
+    // No fake success: report the real error.
+    final = `Sorry, I couldn't finish that because of an error: ${e.message.slice(0, 160)}`;
   } finally {
     if (!awaitingApproval && q.get('SELECT status FROM agent_state WHERE agent_id=?', agentId)?.status !== 'needs_approval') {
       setAgent(agentId, { status: 'idle', current_task: '', run_id: null, run_until: null });
     }
   }
-  return { final: final || 'done', awaitingApproval, card, runId };
+  return { final, awaitingApproval, card, runId };
 }
 
 // Voice / chat instruction entry point (F4/F5).
