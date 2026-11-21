@@ -1,0 +1,7 @@
+const frames=new WeakMap();
+export function updateDeskScreens(furniture,people,now){
+  for(const desk of furniture.children){const screen=desk.userData.screen;if(!screen)continue;const person=[...people.values()].find(c=>c.slot.n===desk.userData.desk),a=person?.agent,working=!!a?.run_id&&Date.parse(a.run_until)>now,key=JSON.stringify([a?.name,a?.current_task,a?.last_reply_at,working,working?Math.floor(now/800):0]);if(frames.get(screen)===key)continue;frames.set(screen,key);
+    const canvas=screen.material.map.image,c=canvas.getContext('2d'),w=canvas.width,h=canvas.height;c.fillStyle='#142c30';c.fillRect(0,0,w,h);c.fillStyle=working?'#9bdfb7':'#6c9387';c.font='bold 24px monospace';c.fillText(a?(a.name.toUpperCase()+' / '+(working?'WORKING':'DESKTOP')):'DESK AVAILABLE',25,40);c.fillStyle='#d0e3cb';c.font='21px monospace';
+    const text=a?(working?a.current_task:a.last_reply_title||'Ready for your next instruction'):'Your next teammate';const words=(text||'Preparing your reply').split(' ');let line='',y=90;for(const word of words){if((line+' '+word).length>30){c.fillText(line,25,y);line=word;y+=32;}else line+=(line?' ':'')+word;if(y>160)break;}if(y<=160)c.fillText(line,25,y);c.fillStyle='#719f8e';c.font='17px monospace';c.fillText(working?'Receiving instruction → preparing result':'Chat to give me something to work on',25,217);if(working&&Math.floor(now/800)%2)c.fillRect(26,233,11,4);screen.material.map.needsUpdate=true;
+  }
+}

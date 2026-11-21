@@ -1,0 +1,207 @@
+// The agent loop: each agent is a Mistral chat-completions run with function calling.
+// Tools read/write only the local SQLite store. Anything that moves money or messages
+// a guest goes through request_approval (RAISE HAND) — there is deliberately NO direct
+// "send message to guest" tool, so an agent can never claim an action that didn't happen.
+// Every LLM step and tool call is recorded as a workflow_event (F3 workflow inspector).
+import { q, audit } from './db.js';
+import { emit } from './events.js';
+import { chat, MOCK } from './mistral.js';
+import { createApproval, clearHand, ALLOWED_TYPES } from './approvals.js';
+
+export const DEFAULT_AGENTS = {
+  mila: { name: 'Mila', role: 'Guest Concierge', department: 'Guest Experience', system: `You are Mila, the Guest Concierge for a solo London Airbnb host. You reply to guests in the guest's own language (check bookings.guest_lang). You read and triage guest messages. You NEVER send a message to a guest, issue a refund/discount, change a price or grant early check-in without the host's approval — call request_approval with a clear summary and the exact reply text in payload.reply. Only report actions that actually happened (tool results tell you). Be warm, concise, professional.` },
+  theo: { name: 'Theo', role: 'Turnover Coordinator', department: 'Operations', system: `You are Theo, Turnover Coordinator for a solo London short-let host. You manage cleaners and cleaning jobs (cleaning_jobs). Rescheduling/reassigning a cleaner does NOT need approval — just do it with reschedule_cleaning and log a note. You never message guests or touch money. Only report actions that actually happened.` },
+  priya: { name: 'Priya', role: 'Pricing & Calendar', department: 'Operations', system: `You are Priya, Pricing & Calendar for a solo London short-let host. You watch rates and empty nights (rates, bookings). Any price change needs the host's approval — call request_approval type 'price_change' with flat_id, date, new_price and amount_gbp as the £ delta (negative for a drop). Blocking/unblocking a calendar date does not need approval (block_calendar). Only report actions that actually happened.` },
+  sam: { name: 'Sam', role: 'Reviews & Reputation', department: 'Guest Experience', system: `You are Sam, Reviews & Reputation for a solo London short-let host. You monitor guest sentiment and draft review responses. Replying to a guest publicly or privately needs host approval via request_approval type 'guest_message'. Only report actions that actually happened.` },
+};
+
+// Agent definition from DB (custom agents) with fallback to defaults.
+export function agentDef(agentId) {
+  const row = q.get('SELECT * FROM agents WHERE id=?', agentId);
+  if (row) return { name: row.name, role: row.role, department: row.department, system: `You are ${row.name}, ${row.role} in the ${row.department} department of a solo London short-let host's AI back office. Follow the same rules as your teammates: tools read/write only the host's data; refunds, discounts, price changes, early check-ins and guest messages need the host's approval via request_approval; only report actions that actually happened. When replying in a chat thread, use send_visual_card if a checklist/table/timeline/chart would help.` };
+  return DEFAULT_AGENTS[agentId];
+}
+
+export const TOOLS = [
+  { type: 'function', function: { name: 'get_overview', description: 'Flats, bookings, unread guest messages, cleaning jobs. Call this first.', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'list_messages', description: 'List guest/host messages, optionally for one booking.', parameters: { type: 'object', properties: { booking_id: { type: 'string' } } } } },
+  { type: 'function', function: { name: 'get_booking', description: 'One booking with guest details.', parameters: { type: 'object', properties: { booking_id: { type: 'string' } }, required: ['booking_id'] } } },
+  { type: 'function', function: { name: 'get_rates', description: 'Nightly rates for a flat.', parameters: { type: 'object', properties: { flat_id: { type: 'string' } }, required: ['flat_id'] } } },
+  { type: 'function', function: { name: 'request_approval', description: 'RAISE HAND. REQUIRED before any refund, discount, price change, early check-in, or message to a guest. The action runs only after the host approves, exactly once. Put the exact guest reply in payload.reply when relevant.',
+      parameters: { type: 'object', properties: {
+        type: { type: 'string', enum: [...ALLOWED_TYPES] },
+        summary: { type: 'string', description: 'Human-readable summary for the approval card' },
+        amount_gbp: { type: 'number', description: 'Money impact in GBP (0 if none; negative for a price drop)' },
+        payload: { type: 'object', description: 'Action payload, e.g. {booking_id, reply} or {flat_id, date, new_price}' },
+      }, required: ['type', 'summary'] } } },
+  { type: 'function', function: { name: 'reschedule_cleaning', description: 'Reassign/reschedule a cleaning job. No approval needed.', parameters: { type: 'object', properties: {
+    job_id: { type: 'string' }, cleaner: { type: 'string' }, new_time: { type: 'string' }, note: { type: 'string' } }, required: ['job_id', 'cleaner'] } } },
+  { type: 'function', function: { name: 'block_calendar', description: 'Block/unblock a date for a flat (maintenance etc.). No approval needed.', parameters: { type: 'object', properties: {
+    flat_id: { type: 'string' }, date: { type: 'string' }, blocked: { type: 'boolean' } }, required: ['flat_id', 'date'] } } },
+  { type: 'function', function: { name: 'send_visual_card', description: 'Attach a visual card (checklist, table, timeline or chart) to your chat reply.', parameters: { type: 'object', properties: {
+    card_type: { type: 'string', enum: ['checklist', 'table', 'timeline', 'chart'] },
+    title: { type: 'string' }, data: { type: 'object' } }, required: ['card_type', 'title', 'data'] } } },
+  { type: 'function', function: { name: 'log_note', description: 'Write a note to the audit log.', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } },
+];
+
+// ---- workflow events (F3 inspector) ------------------------------------------
+let seqByRun = new Map();
+export function wf(agentId, runId, node, kind, input, output, durationMs, status) {
+  const seq = (seqByRun.get(runId) || 0) + 1; seqByRun.set(runId, seq);
+  q.run('INSERT INTO workflow_events (ts,agent_id,run_id,seq,node,kind,input,output,duration_ms,status) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    new Date().toISOString(), agentId, runId, seq, node, kind,
+    input ? JSON.stringify(input).slice(0, 1500) : null,
+    output ? JSON.stringify(output).slice(0, 1500) : null,
+    durationMs ?? null, status);
+  q.run('DELETE FROM workflow_events WHERE id NOT IN (SELECT id FROM workflow_events ORDER BY id DESC LIMIT 200)');
+  emit('state');
+}
+
+function overview() {
+  return {
+    flats: q.all('SELECT * FROM flats'),
+    bookings: q.all('SELECT * FROM bookings ORDER BY checkin'),
+    unread: q.all("SELECT m.*, b.guest_name, b.guest_lang, b.flat_id FROM messages m JOIN bookings b ON b.id=m.booking_id WHERE m.from_side='guest' ORDER BY m.ts DESC LIMIT 10"),
+    jobs: q.all('SELECT * FROM cleaning_jobs ORDER BY date'),
+  };
+}
+
+async function executeTool(agentId, runId, name, args) {
+  const t0 = Date.now();
+  let out;
+  switch (name) {
+    case 'get_overview': out = overview(); break;
+    case 'list_messages': out = q.all('SELECT * FROM messages WHERE (? IS NULL OR booking_id=?) ORDER BY ts', args.booking_id ?? null, args.booking_id ?? null); break;
+    case 'get_booking': out = q.get('SELECT * FROM bookings WHERE id=?', args.booking_id); break;
+    case 'get_rates': out = q.all('SELECT * FROM rates WHERE flat_id=? ORDER BY date LIMIT 14', args.flat_id); break;
+    case 'request_approval': {
+      if (!ALLOWED_TYPES.has(args.type)) { out = { error: 'type not allowed: ' + args.type }; break; }
+      const approval = createApproval(agentId, args);
+      out = { pending: true, approval_id: approval.id, status: 'awaiting_host_approval', note: 'Raised hand. Do NOT claim the action happened — it is pending until the host approves.' };
+      break;
+    }
+    case 'reschedule_cleaning': {
+      const job = q.get('SELECT * FROM cleaning_jobs WHERE id=?', args.job_id);
+      if (!job) { out = { error: 'no such job ' + args.job_id }; break; }
+      q.run('UPDATE cleaning_jobs SET cleaner=?, time=COALESCE(?,time), status=?, note=COALESCE(?,note) WHERE id=?',
+        args.cleaner, args.new_time ?? null, 'scheduled', args.note ?? null, args.job_id);
+      audit(agentId, 'action', `🧹 rescheduled job ${args.job_id} (${job.flat_id} ${job.date}) → ${args.cleaner}${args.new_time ? ' at ' + args.new_time : ''}${args.note ? ' — ' + args.note : ''}`);
+      out = { ok: true, job: q.get('SELECT * FROM cleaning_jobs WHERE id=?', args.job_id) };
+      break;
+    }
+    case 'block_calendar': {
+      q.run('INSERT INTO rates (flat_id,date,price) VALUES (?,?,0) ON CONFLICT(flat_id,date) DO UPDATE SET price=0', args.flat_id, args.date);
+      audit(agentId, 'action', `📅 ${args.blocked === false ? 'unblocked' : 'blocked'} ${args.flat_id} on ${args.date}`);
+      out = { ok: true };
+      break;
+    }
+    case 'send_visual_card': {
+      out = { ok: true, card: { card_type: args.card_type, title: args.title, data: args.data } };
+      break;
+    }
+    case 'log_note': audit(agentId, 'note', args.text); out = { ok: true }; break;
+    default: out = { error: 'unknown tool ' + name };
+  }
+  wf(agentId, runId, name, 'tool', args, out, Date.now() - t0, out?.error ? 'error' : 'done');
+  emit('state');
+  return out;
+}
+
+function setAgent(agentId, patch) {
+  const keys = Object.keys(patch);
+  q.run(`UPDATE agent_state SET ${keys.map((k) => k + '=?').join(',')} WHERE agent_id=?`, ...keys.map((k) => patch[k]), agentId);
+  emit('state');
+}
+
+export function getMemory(agentId) {
+  try { return JSON.parse(q.get('SELECT memory FROM agent_state WHERE agent_id=?', agentId)?.memory || '[]'); } catch { return []; }
+}
+function setMemory(agentId, mem) {
+  q.run('UPDATE agent_state SET memory=? WHERE agent_id=?', JSON.stringify(mem.slice(-14)), agentId);
+}
+
+// One agent turn: Mistral chat-completions loop with tools, max 6 iterations.
+export async function runAgent(agentId, userPrompt, opts = {}) {
+  const def = agentDef(agentId);
+  if (!def) throw new Error('unknown agent ' + agentId);
+  const runId = opts.runId || 'run_' + Math.random().toString(36).slice(2, 8);
+  seqByRun.set(runId, 0);
+  setAgent(agentId, { status: 'working', current_task: userPrompt.slice(0, 60), run_id: runId, run_until: new Date(Date.now() + 120e3).toISOString(), behavior: 'auto', behavior_until: null, raise_label: null });
+  wf(agentId, runId, 'task_received', 'start', { prompt: userPrompt.slice(0, 300) }, null, null, 'active');
+  const memory = getMemory(agentId);
+  const messages = [
+    { role: 'system', content: def.system + `\nToday: ${new Date().toISOString().slice(0, 10)}. You are one of the agents in the host's AI back office (Atelier). Tools read/write only the host's data.` },
+    ...memory,
+    { role: 'user', content: userPrompt },
+  ];
+  let awaitingApproval = false, card = null, final = '';
+  try {
+    for (let i = 0; i < 6; i++) {
+      const t0 = Date.now();
+      const msg = await chat({ messages, tools: TOOLS });
+      wf(agentId, runId, `llm_step_${i + 1}`, 'llm', { model: 'mistral' }, msg.tool_calls?.length ? { tool_calls: msg.tool_calls.map(c => c.function.name) } : { reply: (msg.content || '').slice(0, 300) }, Date.now() - t0, 'done');
+      messages.push(msg);
+      if (!msg.tool_calls?.length) {
+        final = msg.content || '(no text)';
+        setMemory(agentId, [...messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) })), { role: 'assistant', content: final }]);
+        audit(agentId, 'note', `📝 ${final.slice(0, 140)}`);
+        wf(agentId, runId, 'final_reply', 'end', null, { text: final.slice(0, 300) }, null, 'done');
+        setAgent(agentId, { status: 'idle', current_task: '', run_id: null, run_until: null, last_reply_at: new Date().toISOString(), last_reply_title: final.slice(0, 60) });
+        return { final, awaitingApproval: false, card, runId };
+      }
+      for (const call of msg.tool_calls) {
+        let args; try { args = JSON.parse(call.function.arguments || '{}'); } catch { args = {}; }
+        const result = await executeTool(agentId, runId, call.function.name, args);
+        if (call.function.name === 'request_approval' && result.pending) awaitingApproval = true;
+        if (call.function.name === 'send_visual_card' && result.card) card = result.card;
+        messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify(result).slice(0, 2000) });
+      }
+      if (awaitingApproval) {
+        final = 'Raised a hand and waiting for the host — the action is pending, not done.';
+        wf(agentId, runId, 'approval_requested', 'end', null, { status: 'awaiting_host_approval' }, null, 'active');
+        setMemory(agentId, [...messages.filter((m) => m.role !== 'system' && m.role !== 'tool').map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) })), { role: 'assistant', content: final }]);
+        return { final, awaitingApproval: true, card, runId };
+      }
+    }
+  } catch (e) {
+    console.error('agent loop error', agentId, e);
+    wf(agentId, runId, 'error', 'end', null, { error: e.message }, null, 'error');
+    audit(agentId, 'note', `⚠️ ${e.message}`);
+  } finally {
+    if (!awaitingApproval && q.get('SELECT status FROM agent_state WHERE agent_id=?', agentId)?.status !== 'needs_approval') {
+      setAgent(agentId, { status: 'idle', current_task: '', run_id: null, run_until: null });
+    }
+  }
+  return { final: final || 'done', awaitingApproval, card, runId };
+}
+
+// Voice / chat instruction entry point (F4/F5).
+export function instruct(agentId, text) { return runAgent(agentId, text); }
+
+// "Ask about this step" (F3): answer with Mistral using the node's data as context.
+export async function askAboutStep(agentId, nodeId, question) {
+  const node = q.get('SELECT * FROM workflow_events WHERE id=? AND agent_id=?', nodeId, agentId);
+  if (!node) throw new Error('node not found');
+  const siblings = q.all('SELECT * FROM workflow_events WHERE run_id=? ORDER BY seq', node.run_id)
+    .map((e) => ({ ...e, input: e.input ? JSON.parse(e.input) : null, output: e.output ? JSON.parse(e.output) : null }));
+  const prompt = `You are ${agentDef(agentId)?.name || agentId} in the Atelier office. The host asks about one step of your current workflow.\nStep: ${JSON.stringify({ ...node, input: node.input ? JSON.parse(node.input) : null, output: node.output ? JSON.parse(node.output) : null })}\nWorkflow so far: ${JSON.stringify(siblings.map(s => ({ node: s.node, kind: s.kind, status: s.status })))}\nQuestion: ${question}\nAnswer in 1-3 sentences, grounded only in the step data above. Say honestly if the data doesn't cover it.`;
+  let answer;
+  if (MOCK) {
+    answer = `Step “${node.node}” (${node.kind}) ran for ${node.duration_ms ?? '?'}ms and ended “${node.status}”. Input: ${JSON.stringify(node.input ? JSON.parse(node.input) : null)?.slice(0, 120)}. Output: ${JSON.stringify(node.output ? JSON.parse(node.output) : null)?.slice(0, 120)}. That's what the data shows.`;
+  } else {
+    const msg = await chat({ messages: [{ role: 'user', content: prompt }] });
+    answer = msg.content;
+  }
+  audit(agentId, 'note', `❓ asked about step ${node.node}: “${question.slice(0, 60)}” → ${answer.slice(0, 80)}`);
+  emit('state');
+  return { answer, node };
+}
+
+// After the host resolves an approval, give the agent one honest follow-up turn.
+export async function notifyApprovalResolved(agentId, approval, decision) {
+  clearHand(agentId);
+  const prompt = `The host ${decision === 'approved' ? 'APPROVED' : 'DENIED'} your request "${approval.summary}" (${approval.type}${approval.amount_gbp ? ', £' + approval.amount_gbp : ''}). ${decision === 'approved' ? 'The action has now been executed by the system — you may confirm it happened.' : 'The action was NOT executed — tell me how you\'d like to proceed without it.'} Keep it to one short line for the audit log.`;
+  return runAgent(agentId, prompt);
+}
+
+export { MOCK };

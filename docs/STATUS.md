@@ -1,0 +1,52 @@
+# STATUS — isomux agent office
+
+Last audit: 2026-11-21 (Step 0 of the feature prompt). Repo: `mistral-office-agent`.
+
+## Audit table (feature → state at Step 0, 2026-11-21)
+
+| Feature | State | Files |
+|---|---|---|
+| F1 Live office + team builder | **Partial** — live office + status bubbles existed; agent create/rename/delete from UI missing | `src/office/OfficeExperience.jsx`, `src/office/building.js`, `src/office3d/*`, `server/db.js`, `server/index.js` |
+| F2 Raise Hand approvals | **Partial** — tool, red status, walk-to-host, card, exactly-once guard, audit existed; idempotency key + approved_by missing | `server/approvals.js`, `server/agents.js`, `src/App.jsx` |
+| F3 Workflow inspector | **Missing** | — |
+| F4 Hands-free voice | **Partial** — Voxtral TTS/STT wired for click-to-talk approvals | `server/index.js`, `server/mistral.js`, `src/App.jsx` |
+| F5 Chat threads | **Missing** | — |
+| F6 Floors as departments | **Partial** — 4 floors + lift existed | `src/office/building.js` |
+| F7 Human avatar / colleagues / external agents | **Missing** | — |
+| F8 Simulation sandbox (diff before approval) | **Missing** | — |
+| F9 Conflict radar | **Missing** | — |
+| F10 Janitor & Auditor | **Missing** | — |
+| F11 Offline/sovereign mode | **Missing** | — |
+
+## Phase 1 — DONE (all verified 2026-11-21, headless Chrome + API)
+
+| Feature | State now | How to demo |
+|---|---|---|
+| F1 Team builder | **Done** — `POST/PATCH/DELETE /api/agents`; "＋ Hire agent" in Agent tools → Team tab (name, role, department, desk); new agent appears at a desk immediately (server `agents`+`agent_state`, `building.js` maps server agents) | Hire "Nina / Upsell & Extras / Operations / desk 5" → she appears in office + Team list; Rename/Delete work |
+| F2 Raise Hand | **Done** — added `idempotency_key` (unique per action) + `approved_by`; audit shows who/when; double-resolve → 409, action runs once | Simulate overnight → approve a card → audit line `✅ approved by host at … executed once` |
+| F3 Workflow inspector | **Done** — every LLM step + tool call recorded in `workflow_events`; person detail / thread msg "🔀 workflow" opens modal: Diagram (SVG nodes+edges, active node pulses) / Terminal (live log); node click → input/output/duration + "Ask about this step" (`POST /api/agents/:id/ask`, Mistral-grounded) | Run a task, open inspector, click a node, ask "what did this step do" |
+| F4 Hands-free voice | **Done** (code-verified; mic needs a real browser) — "🎙️ Hands-free" toggle: continuous SpeechRecognition (or rolling MediaRecorder → Voxtral STT); "approve"/"deny" resolve top card; "Mila, …" → `POST /api/instruct` → agent replies and speaks via Voxtral TTS (`voice_reply` SSE → autoplay) | Toggle hands-free, say "approve" then "Mila, summarise the night" |
+| F5 Chat threads | **Done** — `threads`/`thread_messages`/`thread_reads`; Threads tab; "Since you last opened" divider + Mistral one-line catch-up (`/api/threads/:id/summary`); `send_visual_card` renders checklist/table/timeline/chart; each agent msg links to F3 workflow | Open thread with Mila, ask for a checklist → card renders; reopen → divider + summary |
+
+## Modes (added 2026-11-21)
+
+- **Advanced mode** (default): everything above — 3D office, floating side panels, work queue, inspector.
+- **Simple mode**: "💬 Simple" toggle in the topbar (persisted in localStorage). On **desktop** it opens as a
+  rounded popup card over the office; on **mobile (≤680px)** it goes full-screen like a chat app.
+  Chat-first list of all agent threads with head avatars, status dots, unread badges. Opening a thread with
+  new agent activity since last read shows a **Quick Glance** card (`POST /api/threads/:id/glance`, cached per
+  last-agent-message): last read, new count, run progress %, "What changed" timeline from workflow_events,
+  Mistral-written "In short" bullets, "What's next?" chips, and a **View conversation** button for the full
+  thread. 🎙️ mic in a thread = Voxtral voice conversation loop (STT → message → agent reply → TTS plays back).
+  Verified: desktop popup + mobile screenshots, glance API, zero console errors.
+
+## Phase 2 — NOT STARTED (waiting for next instruction per spec)
+
+F6 floors-as-departments hardening, F7 avatar/colleagues/visitors, F8 sandbox diff,
+F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
+
+## Log
+
+- 2026-11-21 Step 0: audit written; `AGENTS.md` Product section added.
+- 2026-11-21 Phase 1: F1–F5 implemented + verified (API curl + headless-Chrome screenshots, zero console errors). Server restarted; vite HMR picked up client changes.
+- 2026-11-21 Modes: Simple/Advanced toggle + Quick Glance + voice conversation added (see Modes section). Verified desktop popup (1440px) and mobile full-screen (390px) screenshots.
