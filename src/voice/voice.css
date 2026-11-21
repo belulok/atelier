@@ -1,0 +1,38 @@
+/* Full-screen voice conversation (Simple mode). */
+.vm { position: fixed; inset: 0; z-index: 60; background: #fbfcf9; color: #22301f; display: flex; flex-direction: column; align-items: center; padding: 20px 20px 28px; }
+.vm-top { width: 100%; max-width: 560px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.vm-who { display: flex; flex-direction: column; }
+.vm-who b { font-size: 18px; }
+.vm-who small { color: #6b7a66; }
+.vm-engine { font-size: 12px; color: #6b7a66; border: 1px solid #dfe7d8; border-radius: 999px; padding: 4px 10px; white-space: nowrap; }
+
+.vm-stage { position: relative; width: 260px; height: 260px; margin-top: 8vh; display: flex; align-items: center; justify-content: center; }
+.vm-ring { position: absolute; inset: 22px; border-radius: 50%; border: 6px solid; opacity: .25; transition: transform 80ms linear, opacity 200ms; }
+.vm-stage.hearing .vm-ring { opacity: .55; }
+.vm-stage.speaking .vm-ring { opacity: .4; }
+.vm-face { position: relative; transition: transform 200ms; filter: drop-shadow(0 14px 30px rgba(30, 43, 26, .18)); }
+.vm-stage.thinking .vm-face { animation: vm-bob 1.4s ease-in-out infinite; }
+.vm-stage.error .vm-face { filter: grayscale(.8); opacity: .7; }
+@keyframes vm-bob { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-8px) rotate(-3deg); } }
+
+.vm-dots { position: absolute; bottom: 6px; display: flex; gap: 6px; }
+.vm-dots i { width: 8px; height: 8px; border-radius: 50%; background: #9aab92; animation: vm-dot 1s infinite; }
+.vm-dots i:nth-child(2) { animation-delay: .15s; }
+.vm-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes vm-dot { 0%, 100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-4px); } }
+
+.vm-label { margin-top: 18px; font-size: 15px; color: #4d5c48; min-height: 22px; }
+.vm-captions { width: 100%; max-width: 560px; margin-top: 18px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; flex: 1; }
+.vm-captions p { margin: 0; padding: 10px 14px; border-radius: 16px; line-height: 1.45; max-width: 85%; }
+.vm-you { align-self: flex-end; background: #e6f0ff; color: #17304d; }
+.vm-agent { align-self: flex-start; background: #fff; border: 1px solid #e4ebdd; }
+.vm-note { max-width: 560px; margin-top: 10px; font-size: 13px; color: #8a5a10; background: #fff6e0; border: 1px solid #f1dfae; border-radius: 12px; padding: 8px 12px; }
+
+.vm-controls { display: flex; gap: 18px; margin-top: 16px; }
+.vm-btn { width: 60px; height: 60px; border-radius: 50%; border: 1px solid #dfe7d8; background: #fff; font-size: 22px; cursor: pointer; }
+.vm-btn.on { background: #f1f3ee; }
+.vm-btn.end { background: #e5484d; border-color: #e5484d; color: #fff; }
+
+@media (max-width: 680px) {
+  .vm-stage { margin-top: 4vh; width: 220px; height: 220px; }
+}

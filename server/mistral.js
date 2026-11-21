@@ -15,8 +15,11 @@ for (const line of fs.readFileSync(ENV_PATH, 'utf8').split('\n')) {
 
 export const API_KEY = process.env.MISTRAL_API_KEY || '';
 export const MODEL = process.env.MISTRAL_MODEL || 'mistral-large-latest';
-export const TTS_MODEL = process.env.VOXTRAL_TTS_MODEL || 'voxtral-mini-tts-2603';
+// Voxtral 3 ids per docs.mistral.ai (Studio > Audio). The 2603 TTS id is deprecated.
+export const TTS_MODEL = process.env.VOXTRAL_TTS_MODEL || 'voxtral-mini-tts-3-0';
 export const STT_MODEL = process.env.VOXTRAL_STT_MODEL || 'voxtral-mini-transcribe-3';
+// TTS needs a voice: a preset slug (docs example: gb_jane_neutral) or a saved workspace voice id.
+export const TTS_VOICE = process.env.VOXTRAL_VOICE || 'gb_jane_neutral';
 export const BASE = 'https://api.mistral.ai/v1';
 export const MOCK = !API_KEY;
 if (MOCK) console.warn('[atelier] MISTRAL_API_KEY not set — using LOCAL DEMO STUB (no external AI). Put your key in .env for real Mistral AI.');
@@ -40,10 +43,16 @@ export async function chat({ messages, tools, toolChoice = 'auto' }) {
   return r.choices[0].message;
 }
 
-// Voxtral TTS: POST /v1/audio/speech -> mp3 bytes
+// Voxtral TTS: POST /v1/audio/speech -> mp3. The docs return the audio base64-encoded
+// in `audio_data` (JSON); raw audio bytes are accepted too, in case the API returns them.
 export async function tts(text) {
   if (MOCK) return null;
-  const res = await call('/audio/speech', { model: TTS_MODEL, input: text, response_format: 'mp3' }, true);
+  const res = await call('/audio/speech', { model: TTS_MODEL, input: text, voice_id: TTS_VOICE, response_format: 'mp3' }, true);
+  if ((res.headers.get('content-type') || '').includes('json')) {
+    const j = await res.json();
+    if (!j.audio_data) throw new Error('Voxtral TTS response had no audio_data');
+    return Buffer.from(j.audio_data, 'base64');
+  }
   return Buffer.from(await res.arrayBuffer());
 }
 

@@ -53,7 +53,7 @@ export default function room(scene, floor = { id: 1, code: '01', name: 'Guest Ex
     const welcome=sign(scene,5,1,[0,.065,4.8],(c,w,h)=>{c.fillStyle='#799084';c.font='bold 64px sans-serif';c.textAlign='center';c.fillText('MAKE YOURSELF AT HOME',w/2,150);});welcome.rotation.x=-Math.PI/2;
   }
   elevator(scene,floor);
-  box(scene,[4,.1,2.2],[13.5,-.02,1],'#d0d9d2',.03);
+  box(scene,[4,.045,2.2],[13.5,.022,1],floor.tint,.03);
   box(scene,[9,.65,.16],[7,.32,8.8],'#e1e2d7');
   sign(scene,4,.42,[7,.34,8.895],(c,w,h)=>{c.fillStyle='#e1e2d7';c.fillRect(0,0,w,h);c.fillStyle=floor.color;c.font='bold 52px sans-serif';c.textAlign='center';c.fillText(`LEVEL ${floor.code}   /   ISOMUX`,w/2,158);});
   return {wood,zones};

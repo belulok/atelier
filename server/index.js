@@ -71,7 +71,9 @@ app.post('/api/voice/stt', async (req, res) => {
       // no key: we cannot run Voxtral — tell the client to use browser speech instead
       return res.status(501).json({ error: 'MISTRAL_API_KEY not set — Voxtral STT unavailable; client should fall back to browser speech recognition' });
     }
-    const text = await stt(buf, 'voice.webm', mime);
+    if (!buf.length) return res.status(400).json({ error: 'empty audio' });
+    const ext = mime.includes('wav') ? 'wav' : mime.includes('mp4') ? 'm4a' : mime.includes('ogg') ? 'ogg' : mime.includes('mpeg') ? 'mp3' : 'webm';
+    const text = await stt(buf, `voice.${ext}`, mime);
     res.json({ text, engine: 'voxtral-stt' });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
@@ -189,6 +191,43 @@ app.post('/api/threads/:id/messages', async (req, res) => {
     } catch (e) { console.error('voice reply tts', e.message); }
   }
 });
+// Voice conversation turn (Simple mode voice screen): one request per spoken turn.
+// Stores both messages in the thread, runs the agent, and returns the reply text with
+// its Voxtral audio, so the client can play it straight away (no SSE race).
+app.post('/api/threads/:id/voice-turn', async (req, res) => {
+  const t = q.get('SELECT * FROM threads WHERE id=?', req.params.id);
+  if (!t) return res.status(404).json({ error: 'no such thread' });
+  const text = String(req.body?.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'empty text' });
+  const name = agentDef(t.agent_id)?.name || t.agent_id;
+  q.run('INSERT INTO thread_messages (id,thread_id,from_side,text,ts) VALUES (?,?,?,?,?)',
+    'tm_' + Math.random().toString(36).slice(2, 9), t.id, 'host', text, new Date().toISOString());
+  emit('state');
+  try {
+    const r = await runAgent(t.agent_id, `Voice conversation with the host (your reply is spoken aloud): "${text}". Reply as ${name} in one to three short, natural spoken sentences. No markdown, lists or emoji.`);
+    const reply = r.final || '';
+    q.run('INSERT INTO thread_messages (id,thread_id,from_side,text,card,run_id,ts) VALUES (?,?,?,?,?,?,?)',
+      'tm_' + Math.random().toString(36).slice(2, 9), t.id, 'agent', reply, r.card ? JSON.stringify(r.card) : null, r.runId, new Date().toISOString());
+    emit('state');
+    let audio_url = null, tts_error = null;
+    if (reply && !MOCK) {
+      try {
+        const buf = await tts(reply);
+        if (buf) {
+          const dir = path.join(__dirname, '..', 'data', 'audio');
+          fs.mkdirSync(dir, { recursive: true });
+          const file = `voice-${Date.now()}.mp3`;
+          fs.writeFileSync(path.join(dir, file), buf);
+          audio_url = '/api/audio/' + file;
+        }
+      } catch (e) { tts_error = e.message; console.error('voice-turn tts', e.message); }
+    }
+    res.json({ reply, audio_url, tts: audio_url ? 'voxtral' : MOCK ? 'no-key' : 'failed', tts_error });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
 app.post('/api/threads/:id/read', (req, res) => {
   q.run('INSERT INTO thread_reads (thread_id,user_id,ts) VALUES (?,?,?) ON CONFLICT(thread_id,user_id) DO UPDATE SET ts=excluded.ts', req.params.id, 'host', new Date().toISOString());
   emit('state'); res.json({ ok: true });

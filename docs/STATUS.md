@@ -50,3 +50,6 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
 - 2026-11-21 Step 0: audit written; `AGENTS.md` Product section added.
 - 2026-11-21 Phase 1: F1–F5 implemented + verified (API curl + headless-Chrome screenshots, zero console errors). Server restarted; vite HMR picked up client changes.
 - 2026-11-21 Modes: Simple/Advanced toggle + Quick Glance + voice conversation added (see Modes section). Verified desktop popup (1440px) and mobile full-screen (390px) screenshots.
+
+## In progress
+- belulok · Voice conversation like ChatGPT voice mode, using the agent's face: fix STT upload (raw WAV), Voxtral TTS (voice_id + base64 response), automatic turn-taking, interrupting the agent by speaking, browser-speech fallback without a key · `src/voice/*`, `src/SimpleMode.jsx`, `src/office/AgentHead.jsx`, `src/api.js`, `server/mistral.js`, `server/index.js`

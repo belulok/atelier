@@ -18,10 +18,14 @@ export function subscribe(onState, onEvent) {
   return () => es.close();
 }
 
-export async function uploadAudio(blob, filename = 'voice.webm') {
-  const fd = new FormData();
-  fd.append('file', blob, filename);
-  const res = await fetch('/api/voice/stt', { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(await res.text());
+// Voxtral STT. The server reads the raw request body as the audio file, so send the
+// blob itself (not multipart form data) with its own content type.
+export async function uploadAudio(blob) {
+  const res = await fetch('/api/voice/stt', { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob });
+  if (!res.ok) {
+    const err = new Error((await res.text()) || res.statusText);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }

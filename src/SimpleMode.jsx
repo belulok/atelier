@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import AgentHead from './office/AgentHead.jsx';
-import { api, uploadAudio } from './api.js';
+import { api } from './api.js';
+import VoiceMode from './voice/VoiceMode.jsx';
+import { primeAudio } from './voice/engine.js';
 
 const TEAM_COLORS = { software: '#3279e8', research: '#24ad68', content: '#f3b91f', support: '#ec503d' };
 
@@ -11,13 +13,10 @@ export default function SimpleMode({ state, voiceReply, onExit }) {
   const [threadId, setThreadId] = useState(null);
   const [showChat, setShowChat] = useState(false);
   const [glance, setGlance] = useState(null);
-  const [talking, setTalking] = useState(false);
-  const [voiceNote, setVoiceNote] = useState('');
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [voxtral, setVoxtral] = useState(true); // server has a Mistral key (Voxtral available)
   const [text, setText] = useState('');
   const audioRef = useRef(null);
-  const talkingRef = useRef(false);
-  const recRef = useRef(null);
-  const srRef = useRef(null);
   // Quick Glance is armed ONLY when the popup itself is (re)opened; sending messages,
   // receiving replies or switching chats inside the popup never re-shows it.
   const glanceArmedRef = useRef(true);
@@ -37,10 +36,8 @@ export default function SimpleMode({ state, voiceReply, onExit }) {
     }
   }, [threadId, active?.unread, active?.last_message_at]);
 
-  // voice_reply SSE (server TTS of agent replies) → play, then keep listening if talking
-  useEffect(() => {
-    if (!state) return;
-  }, [state]);
+  // Know up front whether voice can use Voxtral, so opening voice mode needs no wait.
+  useEffect(() => { api('/meta').then((m) => setVoxtral(!m.mock)).catch(() => {}); }, []);
 
   const openThread = async (agentId) => {
     const { thread } = await api('/threads', { method: 'POST', body: { agent_id: agentId } });
@@ -53,37 +50,9 @@ export default function SimpleMode({ state, voiceReply, onExit }) {
     setText('');
   };
 
-  // Voxtral voice conversation loop: listen → STT → send → agent replies → TTS plays → listen again
-  const stopTalking = () => { talkingRef.current = false; setTalking(false); try { srRef.current?.stop(); } catch {} try { recRef.current?.stop(); } catch {} };
-  const startTalking = async () => {
-    talkingRef.current = true; setTalking(true); setVoiceNote('Listening…');
-    const onText = async (t) => {
-      if (!talkingRef.current) return;
-      setVoiceNote(`“${t}”`);
-      await send(t, true);
-    };
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SR) {
-      const r = new SR(); r.lang = 'en-GB'; r.continuous = true; r.interimResults = false;
-      r.onresult = (e) => onText(e.results[e.results.length - 1][0].transcript);
-      r.onend = () => { if (talkingRef.current) { try { r.start(); } catch {} } };
-      srRef.current = r; r.start();
-    } else {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const loop = async () => {
-        if (!talkingRef.current) { stream.getTracks().forEach((t) => t.stop()); return; }
-        const rec = new MediaRecorder(stream); recRef.current = rec;
-        const chunks = []; rec.ondataavailable = (e) => chunks.push(e.data);
-        rec.onstop = async () => {
-          if (!talkingRef.current) return;
-          try { const { text } = await uploadAudio(new Blob(chunks, { type: 'audio/webm' })); if (text) await onText(text); } catch {}
-          loop();
-        };
-        rec.start(); setTimeout(() => { try { rec.stop(); } catch {} }, 4000);
-      };
-      loop();
-    }
-  };
+  // Voice conversation (like ChatGPT voice mode, with the agent's face). primeAudio()
+  // must run inside the tap so the browser allows the agent's voice to play.
+  const openVoice = () => { primeAudio(); setVoiceOpen(true); };
 
   // play agent voice replies pushed over SSE (Voxtral TTS), like a voice conversation
   useEffect(() => {
@@ -101,13 +70,21 @@ export default function SimpleMode({ state, voiceReply, onExit }) {
     return (
       <div className="simple">
         <header className="simple-top">
-          <button className="s-back" onClick={() => { setThreadId(null); setGlance(null); }}>←</button>
-          <span className="s-avatar"><AgentHead size={34} color={TEAM_COLORS[activeAgentTeam(agents, active)] || '#f3b91f'} /></span>
+          <button className="s-back" onClick={() => { setThreadId(null); setGlance(null); setVoiceOpen(false); }}>←</button>
+          <button className="s-avatar s-avatar-btn" onClick={openVoice} title={`Talk to ${active.agent_name}`}><AgentHead size={34} color={TEAM_COLORS[activeAgentTeam(agents, active)] || '#f3b91f'} /></button>
           <div className="s-who"><b>{active.agent_name}</b><span className={`s-status ${activeAgentStatus(agents, active)}`}>{activeAgentStatus(agents, active)}</span></div>
-          <button className={`s-mic ${talking ? 'on' : ''}`} onClick={talking ? stopTalking : startTalking} title="Voice conversation (Voxtral)">{talking ? '🎙️…' : '🎙️'}</button>
+          <button className="s-mic" onClick={openVoice} title={`Voice conversation with ${active.agent_name}`}>🎙️</button>
           <button className="s-mode" onClick={onExit}>Advanced</button>
         </header>
-        {voiceNote && <div className="s-voicenote">{voiceNote}</div>}
+        {voiceOpen && (
+          <VoiceMode
+            agent={agents.find((a) => a.id === active.agent_id) || { name: active.agent_name, role: '' }}
+            color={TEAM_COLORS[activeAgentTeam(agents, active)] || '#f3b91f'}
+            threadId={active.id}
+            useVoxtral={voxtral}
+            onClose={() => setVoiceOpen(false)}
+          />
+        )}
         <div className="s-body">
           {glance && !showChat && (
             <div className="glance card-light">
@@ -145,7 +122,7 @@ export default function SimpleMode({ state, voiceReply, onExit }) {
             </div>
           )}
         </div>
-        <audio ref={audioRef} onEnded={() => { if (talkingRef.current) { /* keep listening; SR loop already continues */ } }} />
+        <audio ref={audioRef} />
       </div>
     );
   }
