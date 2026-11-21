@@ -10,7 +10,9 @@ import './voice.css';
 // in the chat thread.
 // `useVoxtral`: the server has a Mistral key (from /api/meta). Without one, the engine
 // uses the browser's speech recognition and voice.
-export default function VoiceMode({ agent, color, threadId, useVoxtral = true, onClose }) {
+// embedded: render inside the chat box (Simple mode popup) instead of over the whole screen;
+// the popup's own header already shows the agent's name.
+export default function VoiceMode({ agent, color, threadId, useVoxtral = true, onClose, embedded = false }) {
   const [phase, setPhase] = useState('starting');
   const [level, setLevel] = useState(0);
   const [mouth, setMouth] = useState(0);
@@ -64,15 +66,15 @@ export default function VoiceMode({ agent, color, threadId, useVoxtral = true, o
   const ring = phase === 'speaking' ? 1 + mouth * 0.18 : 1 + level * 0.35;
 
   return (
-    <div className="vm" role="dialog" aria-label={`Voice conversation with ${agent.name}`}>
+    <div className={`vm${embedded ? ' vm-embedded' : ''}`} role={embedded ? 'region' : 'dialog'} aria-label={`Voice conversation with ${agent.name}`}>
       <header className="vm-top">
-        <div className="vm-who"><b>{agent.name}</b><small>{agent.role}</small></div>
+        {!embedded && <div className="vm-who"><b>{agent.name}</b><small>{agent.role}</small></div>}
         {engine && <span className="vm-engine">{engine === 'voxtral' ? 'Voxtral voice' : 'Browser voice (no Mistral key)'}</span>}
       </header>
 
       <div className={`vm-stage ${phase}`}>
         <div className="vm-ring" style={{ transform: `scale(${ring})`, borderColor: color }} />
-        <div className="vm-face"><AgentHead size={176} color={color} mouth={phase === 'speaking' ? mouth : 0} blink={blink} /></div>
+        <div className="vm-face"><AgentHead size={embedded ? 128 : 176} color={color} mouth={phase === 'speaking' ? mouth : 0} blink={blink} /></div>
         {phase === 'thinking' && <div className="vm-dots"><i /><i /><i /></div>}
       </div>
 

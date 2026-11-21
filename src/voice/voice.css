@@ -36,3 +36,17 @@
 @media (max-width: 680px) {
   .vm-stage { margin-top: 4vh; width: 220px; height: 220px; }
 }
+
+/* Inside the chat box (Simple mode popup): fills the box under its header instead of the screen. */
+.vm.vm-embedded { position: static; inset: auto; z-index: auto; background: transparent; padding: 10px 20px 20px;
+  height: min(620px, calc(92vh - 72px)); min-height: 420px; }
+.vm-embedded .vm-top { justify-content: flex-end; min-height: 24px; }
+.vm-embedded .vm-stage { width: 190px; height: 190px; margin-top: 2vh; flex-shrink: 0; }
+.vm-embedded .vm-ring { inset: 16px; border-width: 5px; }
+.vm-embedded .vm-label { margin-top: 10px; }
+.vm-embedded .vm-captions { margin-top: 12px; min-height: 0; }
+.vm-embedded .vm-btn { width: 52px; height: 52px; font-size: 19px; }
+@media (max-width: 680px) {
+  .vm.vm-embedded { height: calc(100dvh - 86px); min-height: 0; }
+  .vm-embedded .vm-stage { width: 170px; height: 170px; }
+}

@@ -79,15 +79,16 @@ export default function SimpleMode({ state, voiceReply, onExit, registerOpen }) 
           <button className="s-mic" onClick={openVoice} title={`Voice conversation with ${active.agent_name}`}>🎙️</button>
           <button className="s-mode" onClick={onExit}>Advanced</button>
         </header>
-        {voiceOpen && (
+        {voiceOpen ? (
           <VoiceMode
             agent={agents.find((a) => a.id === active.agent_id) || { name: active.agent_name, role: '' }}
             color={TEAM_COLORS[activeAgentTeam(agents, active)] || '#f3b91f'}
             threadId={active.id}
             useVoxtral={voxtral}
             onClose={() => setVoiceOpen(false)}
+            embedded
           />
-        )}
+        ) : (
         <div className="s-body">
           {glance && !showChat && (
             <div className="glance card-light">
@@ -125,6 +126,7 @@ export default function SimpleMode({ state, voiceReply, onExit, registerOpen }) 
             </div>
           )}
         </div>
+        )}
         <audio ref={audioRef} />
       </div>
     );

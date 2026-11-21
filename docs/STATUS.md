@@ -98,3 +98,8 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
   or the topbar toggle (now clickable again through the backdrop).
 - Fixed a 500 on `GET /api/state`: old rows had JSON columns cut mid-string; all reads now parse safely
   (`safeJson`/`parse`) and 7 bad rows in `data/host.db` were repaired.
+
+### Done: voice conversation stays in the chat box (belulok)
+- Voice mode used to cover the whole screen; it now opens inside the Simple mode chat box, in place of the
+  messages, under the box's own header (`embedded` prop on `src/voice/VoiceMode.jsx`, `.vm-embedded` in
+  `src/voice/voice.css`, `src/SimpleMode.jsx`). Phone width: the box is full screen, so voice is too.
