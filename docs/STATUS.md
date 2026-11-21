@@ -137,4 +137,8 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
   Tested: Dev opened PR #2 on belulok/atelier with a Codestral-written page and raised the deploy approval.
   The merge itself is untested end to end (it runs on the host's click).
 - Step prompts now forbid claiming actions no tool did (an earlier run "tested in a browser" and "pushed" with no tools).
+- While a deploy step waits, the agent watches the PR on GitHub every 2 s (`watchPullRequest`): merged there → step
+  done ("merged on GitHub by …", the Atelier approval closes without a second merge); closed there → step skipped;
+  approved in a GitHub review → merged as if approved in Atelier. Tested: closing PR #3 on GitHub was picked up in 2.1 s.
+  (GitHub doesn't let the PR author approve their own PR; PRs are opened as the token owner.)
 

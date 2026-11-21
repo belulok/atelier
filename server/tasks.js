@@ -5,12 +5,12 @@
 // point (after the current step, or while it waits for your approval) the agent pauses,
 // re-plans the steps it hasn't done yet, and carries on. Nothing is queued behind the task.
 // Steps that message a guest, give money back or change a price go through Raise Hand.
-import { q } from './db.js';
+import { q, audit } from './db.js';
 import { emit } from './events.js';
 import { chat, MOCK, TASK_MODEL } from './mistral.js';
 import { agentDef, executeTool, TOOLS } from './agents.js';
-import { createApproval, clearHand } from './approvals.js';
-import { GITHUB_ON, GITHUB_TOOLS, DEFAULT_REPO } from './github.js';
+import { createApproval, clearHand, resolveApproval } from './approvals.js';
+import { GITHUB_ON, GITHUB_TOOLS, DEFAULT_REPO, watchPullRequest } from './github.js';
 
 const now = () => new Date().toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -268,9 +268,43 @@ const openedPr = new Map(); // task id → the pull request it opened
 // Wait for the host's decision; re-plan meanwhile if they add something.
 async function waitForApproval(taskId, approvalId) {
   const until = Date.now() + 30 * 60e3;
+  const first = q.get('SELECT type, payload, agent_id FROM approvals WHERE id=?', approvalId);
+  const pr = first?.type === 'deploy' && GITHUB_ON ? parse(first.payload, {}) : null;
+  if (pr?.pr_number) log(taskId, 'info', `watching pull request #${pr.pr_number} on GitHub every 2s (merge or approve it there, or approve here)`);
+  let lastWatch = 0, watchErr = false;
   while (Date.now() < until) {
     const a = q.get('SELECT status FROM approvals WHERE id=?', approvalId);
     if (!a || a.status !== 'pending') return a?.status || 'denied';
+    if (pr?.pr_number && Date.now() - lastWatch >= 2000) {
+      lastWatch = Date.now();
+      try {
+        const w = await watchPullRequest(pr);
+        if (w.merged) {
+          // Merged on GitHub: close the Atelier approval without merging again.
+          const res = q.run("UPDATE approvals SET status='approved', decision='approved', resolved_at=?, approved_by=?, payload=? WHERE id=? AND status='pending'",
+            now(), 'github:' + (w.merged_by || 'someone'), JSON.stringify({ ...pr, merge: { merged: true, sha: w.sha, url: w.url, by: w.merged_by, via: 'github' } }), approvalId);
+          if (res.changes) {
+            clearHand(first.agent_id);
+            audit(first.agent_id, 'action', `🚀 saw PR #${pr.pr_number} merged on GitHub by ${w.merged_by || 'someone'}`);
+            log(taskId, 'done', `✓ pull request #${pr.pr_number} was merged on GitHub by ${w.merged_by || 'someone'}`);
+            emit('state');
+            return 'approved';
+          }
+        } else if (w.state === 'closed') {
+          const res = q.run("UPDATE approvals SET status='denied', decision='denied', resolved_at=?, approved_by=? WHERE id=? AND status='pending'", now(), 'github', approvalId);
+          if (res.changes) {
+            clearHand(first.agent_id);
+            log(taskId, 'skip', `↷ pull request #${pr.pr_number} was closed on GitHub without merging`);
+            emit('state');
+            return 'denied';
+          }
+        } else if (w.approvedBy) {
+          log(taskId, 'done', `✓ ${w.approvedBy} approved pull request #${pr.pr_number} on GitHub, merging it`);
+          resolveApproval(approvalId, 'approved', 'github:' + w.approvedBy);
+          continue;
+        }
+      } catch (e) { if (!watchErr) { watchErr = true; log(taskId, 'error', `couldn't check GitHub (${e.message}); still waiting for approval here`); } }
+    }
     if (getTask(taskId)?.status === 'cancelled') return 'cancelled';
     const adds = takeAdditions(taskId);
     if (adds.length) await replan(taskId, adds);
@@ -285,7 +319,7 @@ async function waitForMerge(approvalId) {
   if (a0?.type !== 'deploy') return null;
   for (let i = 0; i < 20; i++) {
     const m = parse(q.get('SELECT payload FROM approvals WHERE id=?', approvalId)?.payload, {});
-    if (m.merge) return m.merge.merged ? `Merged pull request #${m.pr_number} into main (${String(m.merge.sha || '').slice(0, 7)}): ${m.merge.url || m.pr_url || ''}` : `The merge failed: ${m.merge.error}`;
+    if (m.merge) return m.merge.merged ? `Merged pull request #${m.pr_number} into main${m.merge.via === 'github' ? ` on GitHub by ${m.merge.by || 'someone'}` : ''} (${String(m.merge.sha || '').slice(0, 7)}): ${m.merge.url || m.pr_url || ''}` : `The merge failed: ${m.merge.error}`;
     await sleep(500);
   }
   return 'Approved; the merge is still running on GitHub.';
@@ -320,7 +354,9 @@ async function execute(taskId) {
         clearHand(t.agent_id);
         t = getTask(taskId); step = t.steps.find((s) => s.approval_id === r.approvalId);
         const ok = decision === 'approved';
-        let result = ok ? `You approved it, so it's done: ${r.summary}`.slice(0, 300) : decision === 'timeout' ? 'No answer in 30 minutes, so I skipped it.' : 'You said no, so this was not done.';
+        const viaGithub = String(q.get('SELECT approved_by FROM approvals WHERE id=?', r.approvalId)?.approved_by || '').startsWith('github');
+        let result = ok ? `You approved it, so it's done: ${r.summary}`.slice(0, 300) : decision === 'timeout' ? 'No answer in 30 minutes, so I skipped it.'
+          : viaGithub ? 'The pull request was closed on GitHub, so it was not merged.' : 'You said no, so this was not done.';
         if (ok) { const merged = await waitForMerge(r.approvalId); if (merged) result = merged; }
         Object.assign(step, { status: ok ? 'done' : 'skipped', ended_at: now(), result });
         t.status = 'running'; save(t);

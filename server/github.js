@@ -93,6 +93,21 @@ export async function pullRequestStatus({ repo, pr_number }) {
   return { pr_number: pr.number, state: pr.state, merged: pr.merged, url: pr.html_url, merge_commit_sha: pr.merge_commit_sha };
 }
 
+// What happened to a pull request on GitHub itself: merged, closed, or approved in a review.
+// Polled every 2 s while a deploy step waits (two API calls; well inside GitHub's rate limit).
+export async function watchPullRequest({ repo, pr_number }) {
+  const full = parseRepo(repo);
+  const n = Number(pr_number);
+  const pr = await gh('GET', `/repos/${full}/pulls/${n}`);
+  let approvedBy = null;
+  if (!pr.merged && pr.state === 'open') {
+    const latest = {}; // each reviewer's latest review decides
+    for (const r of await gh('GET', `/repos/${full}/pulls/${n}/reviews?per_page=100`)) if (r.user?.login) latest[r.user.login] = r.state;
+    approvedBy = Object.keys(latest).find((u) => latest[u] === 'APPROVED') || null;
+  }
+  return { merged: !!pr.merged, state: pr.state, merged_by: pr.merged_by?.login || null, sha: pr.merge_commit_sha, url: pr.html_url, approvedBy };
+}
+
 export const GITHUB_TOOLS = [
   { type: 'function', function: { name: 'github_open_pr', description: `Ship code: Codestral writes the files, then a branch and a pull request are opened on GitHub for review (no approval needed to open it). Files go under ${ROOT}/. Default repo: ${DEFAULT_REPO}. Merging it is a separate step that needs the host's approval (request_approval type "deploy").`,
     parameters: { type: 'object', properties: {
