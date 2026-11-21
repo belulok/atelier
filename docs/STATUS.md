@@ -105,3 +105,11 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
   `src/voice/voice.css`, `src/SimpleMode.jsx`). Phone width: the box is full screen, so voice is too.
 - Clicking empty office space (a click, not a drag) or pressing Esc closes the Simple mode popup; clicking an
   agent still opens its chat (`onEmptyClick` through `createOffice.js` → `OfficeCanvas` → `OfficeExperience` → `App`).
+
+## In progress
+- belulok · Agent tasks you can watch: talk to an agent → it plans a multi-step task, runs it step by step, and
+  you can say "show me what you're working on" (pipeline view in the chat box), "show me the CLI" (terminal view),
+  add or change things mid-task (it pauses at the next step and re-plans), and "switch me to Dev" (hand-over to
+  another agent). Demo: Mila gets Lukas ready for check-in. Files: `server/tasks.js` (new), `server/agents.js`,
+  `server/index.js`, `server/db.js`, `src/tasks/*` (new), `src/SimpleMode.jsx`, `src/voice/VoiceMode.jsx`,
+  `src/voice/voice.css`, `src/App.jsx` (SSE ui events only). Please avoid these files until this lands.
