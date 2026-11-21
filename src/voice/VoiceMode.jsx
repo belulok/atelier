@@ -28,6 +28,17 @@ export default function VoiceMode({ agent, color, threadId, useVoxtral = true, o
   const engineRef = useRef(null);
   const onUiRef = useRef(onUi); onUiRef.current = onUi;
   const pendingSwitchRef = useRef(null);
+  const switchTimerRef = useRef(null);
+  // Hand over to another agent once this one stops talking: when its reply ends, when you
+  // interrupt it, or after 10 s at the latest (so a hand-over can never get stuck).
+  const applySwitch = () => {
+    const sw = pendingSwitchRef.current;
+    if (!sw) return false;
+    pendingSwitchRef.current = null; clearTimeout(switchTimerRef.current);
+    onUiRef.current?.([sw]);
+    return true;
+  };
+  useEffect(() => () => clearTimeout(switchTimerRef.current), []);
   const greetRef = useRef(greeting);
 
   useEffect(() => {
@@ -36,14 +47,16 @@ export default function VoiceMode({ agent, color, threadId, useVoxtral = true, o
         const r = await api(`/threads/${threadId}/voice-turn`, { method: 'POST', body: { text } });
         const ui = r.ui || [];
         const sw = ui.find((a) => a.type === 'switch_agent');
-        if (sw) pendingSwitchRef.current = sw; // after the agent finishes speaking
-        else if (ui.length) onUiRef.current?.(ui);
-        if (sw && !r.reply) { pendingSwitchRef.current = null; onUiRef.current?.([sw]); }
+        if (sw) { // after the agent finishes (or you interrupt) its hand-over sentence
+          pendingSwitchRef.current = sw;
+          clearTimeout(switchTimerRef.current); switchTimerRef.current = setTimeout(applySwitch, 10000);
+          if (!r.reply) applySwitch();
+        } else if (ui.length) onUiRef.current?.(ui);
         return r;
       },
       onPhase: (p) => {
         setPhase(p); if (p === 'hearing') setNote('');
-        if (p === 'listening' && pendingSwitchRef.current) { const sw = pendingSwitchRef.current; pendingSwitchRef.current = null; onUiRef.current?.([sw]); return; }
+        if ((p === 'listening' || p === 'hearing') && applySwitch()) return;
         if (p === 'listening' && greetRef.current) { const g = greetRef.current; greetRef.current = ''; greet(e, g); }
       },
       onLevel: setLevel,
