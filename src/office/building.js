@@ -21,27 +21,21 @@ const HUMAN_MEMBERS = [
   { id: 'demo-finn', name: 'Finn', role: 'Creative director', floor: 3, color: '#8b81b1', activity: 'Exploring a new idea', behavior: 'desk' },
   { id: 'demo-ada', name: 'Ada', role: 'Founder', floor: 3, color: '#bd816c', activity: 'In a focus session', behavior: 'booths' },
 ];
-const SHARED_AGENTS = [
-  { id: 'demo-pip', name: 'Pip', role: 'Welcome assistant', floor: 0, owner: 'Alex', team: 'content', activity: 'Ready to help', behavior: 'social' },
-  { id: 'demo-iris', name: 'Iris', role: 'Guest research', floor: 1, owner: 'Jules', team: 'software', activity: 'Researching local favourites', behavior: 'desk' },
-  { id: 'demo-atlas', name: 'Atlas', role: 'Schedule assistant', floor: 2, owner: 'Omar', team: 'content', activity: 'Organising the day', behavior: 'desk' },
-  { id: 'demo-scout', name: 'Scout', role: 'Research assistant', floor: 3, owner: 'Finn', team: 'research', activity: 'Collecting inspiration', behavior: 'desk' },
-  { id: 'demo-nova', name: 'Nova', role: 'Strategy assistant', floor: 3, owner: 'Ada', team: 'software', activity: 'Exploring opportunities', behavior: 'desk' },
-];
-
 export function organisationMembers(agents = []) {
-  // server agents (incl. custom hires) win; fall back to built-in profiles
-  const own = (agents.length ? agents : Object.keys(AGENT_PROFILES).map(id => ({ id }))).map((a) => {
+  // Every agent in the office comes from the server (yours, hired subagents and coworkers'
+  // agents like Pip or Iris), so every agent on the floor has a chat. The built-in
+  // profiles only fill in until the first state arrives.
+  const list = agents.length ? agents : Object.keys(AGENT_PROFILES).map(id => ({ id }));
+  const all = list.map((a) => {
     const profile = AGENT_PROFILES[a.id] || {};
     return { status: 'idle', ...profile, ...a, id: a.id,
       name: a.name || profile.name || a.id, role: a.role || profile.role || 'Agent',
       floor: a.floor ?? profile.floor ?? 1, desk: a.desk, team: a.team || profile.team || 'software',
-      owner: 'You', kind: 'agent' };
+      owner: a.owner || 'You', kind: 'agent' };
   });
   return [
     ...HUMAN_MEMBERS.map(p => ({ ...p, kind: 'person', isSample: true, status: 'present' })),
-    ...own,
-    ...SHARED_AGENTS.map(p => ({ ...p, kind: 'agent', isSample: true, status: 'working', current_task: p.activity })),
+    ...all,
   ];
 }
 

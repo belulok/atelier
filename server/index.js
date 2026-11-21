@@ -10,12 +10,14 @@ import { getApproval, resolveApproval, approvalAudioPath } from './approvals.js'
 import { notifyApprovalResolved, runAgent, instruct, askAboutStep, agentDef } from './agents.js';
 import { simulateOvernight, morningBriefing } from './simulate.js';
 import { DEPARTMENTS, hireAgent } from './team.js';
+import { ensureColleagueAgents } from './colleagues.js';
 import { stt, tts, chat, MOCK, MODEL } from './mistral.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4100);
 
 if (q.all('SELECT id FROM flats').length === 0) { console.log('[atelier] seeding demo data…'); seed(); }
+ensureColleagueAgents(); // every agent in the office is a real, chat-able agent
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -33,7 +35,7 @@ app.get('/api/stream', (req, res) => {
 app.get('/api/state', (_req, res) => res.json(snapshot()));
 app.get('/api/meta', (_req, res) => res.json({ mock: MOCK, model: MODEL, ai: MOCK ? 'local-demo-stub (set MISTRAL_API_KEY in .env for Mistral AI)' : 'mistral' }));
 
-app.post('/api/reset', (_req, res) => { seed(); emit('state'); res.json({ ok: true }); });
+app.post('/api/reset', (_req, res) => { seed(); ensureColleagueAgents(); emit('state'); res.json({ ok: true }); });
 
 app.post('/api/simulate/overnight', async (_req, res) => {
   res.json({ ok: true, started: true });

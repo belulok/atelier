@@ -31,8 +31,8 @@ CREATE TABLE IF NOT EXISTS thread_reads (thread_id TEXT, user_id TEXT, ts TEXT, 
 for (const col of ['idempotency_key TEXT', 'approved_by TEXT']) {
   try { db.exec(`ALTER TABLE approvals ADD COLUMN ${col}`); } catch {}
 }
-// hired subagents: who they report to and their job instructions (guarded for existing DBs)
-for (const col of ['reports_to TEXT', 'instructions TEXT']) {
+// hired subagents (who they report to, job instructions) and coworkers' agents (owner) — guarded for existing DBs
+for (const col of ['reports_to TEXT', 'instructions TEXT', 'owner TEXT']) {
   try { db.exec(`ALTER TABLE agents ADD COLUMN ${col}`); } catch {}
 }
 
@@ -105,7 +105,7 @@ export function audit(agentId, kind, detail) {
 }
 
 export function snapshot() {
-  const agents = q.all(`SELECT s.*, a.name, a.role, a.department, a.desk AS meta_desk, a.floor, a.team AS meta_team, a.is_custom, a.reports_to
+  const agents = q.all(`SELECT s.*, a.name, a.role, a.department, a.desk AS meta_desk, a.floor, a.team AS meta_team, a.is_custom, a.reports_to, a.owner
     FROM agent_state s LEFT JOIN agents a ON a.id = s.agent_id ORDER BY s.agent_id`).map((r) => ({
     ...r,
     id: r.agent_id, // the 3D office keys characters by agent.id

@@ -77,3 +77,13 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
   `GET /api/state` fail with 500 and broke live updates).
 - Verified with the real Mistral key: Mila hired "Nina, Upsells & Extras" by voice; Nina then answered by voice
   with her manager and job. Shared code: `server/team.js` (API Hire button and the tool).
+
+### Done: every agent on the floor has a chat (belulok)
+- The 5 coworker agents in the office (Pip/Alex, Iris/Jules, Atlas/Omar, Scout/Finn, Nova/Ada) were
+  decoration only, so the office showed agents walking around that you couldn't chat with. They are now real
+  server agents (`server/colleagues.js`, added on start and after reset), each with an owner, a job and a desk.
+- The office draws every agent from the server (`organisationMembers` in `src/office/building.js`), so
+  anything you see on the floor is in Simple mode's chat list and can be chatted with by text or voice.
+  The 7 sample *people* stay as decoration.
+- New `agents.owner` column; a coworker's agent knows whose agent it is. Verified with the real key: Pip
+  answers by voice as Alex's agent.

@@ -27,6 +27,7 @@ export function agentDef(agentId) {
     const boss = row.reports_to ? q.get('SELECT name, role FROM agents WHERE id=?', row.reports_to) : null;
     return { name: row.name, role: row.role, department: row.department, system: `You are ${row.name}, ${row.role} in the ${row.department} department of a solo London short-let host's AI back office.`
       + (boss ? ` You are a subagent working under ${boss.name} (${boss.role}).` : '')
+      + (row.owner ? ` You are ${row.owner}'s agent; ${row.owner} is a coworker in the same office, and the host can talk to you directly.` : '')
       + (row.instructions ? ` Your job: ${row.instructions}` : '')
       + ` Follow the same rules as your teammates: tools read/write only the host's data; refunds, discounts, price changes, early check-ins and guest messages need the host's approval via request_approval; only report actions that actually happened. When replying in a chat thread, use send_visual_card if a checklist/table/timeline/chart would help.` };
   }
