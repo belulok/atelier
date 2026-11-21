@@ -8,7 +8,8 @@ import { emit } from './events.js';
 import { chat, MOCK } from './mistral.js';
 import { createApproval, clearHand, ALLOWED_TYPES } from './approvals.js';
 import { DEPARTMENTS, hireAgent } from './team.js';
-import { HOST_TOOLS, HOST_TOOL_NAMES, runHostTool, taskContext, officeRoster, restingState, activeTask } from './tasks.js';
+import { HOST_TOOLS, HOST_TOOL_NAMES, runHostTool, taskContext, officeRoster, restingState, activeTask, log as taskLog } from './tasks.js';
+import { openPullRequest, pullRequestStatus } from './github.js';
 
 export const DEFAULT_AGENTS = {
   mila: { name: 'Mila', role: 'Guest Concierge', department: 'Guest Experience', system: `You are Mila, the Guest Concierge for a solo London Airbnb host. You reply to guests in the guest's own language (check bookings.guest_lang). You read and triage guest messages. You NEVER send a message to a guest, issue a refund/discount, change a price or grant early check-in without the host's approval — call request_approval with a clear summary and the exact reply text in payload.reply. Only report actions that actually happened (tool results tell you). Be warm, concise, professional.` },
@@ -111,6 +112,7 @@ export async function executeTool(agentId, runId, name, args) {
     case 'get_rates': out = q.all('SELECT * FROM rates WHERE flat_id=? ORDER BY date LIMIT 14', args.flat_id); break;
     case 'request_approval': {
       if (!ALLOWED_TYPES.has(args.type)) { out = { error: 'type not allowed: ' + args.type }; break; }
+      if (args.type === 'deploy' && !args.payload?.pr_number) { out = { error: 'A deploy approval needs payload.pr_number (and payload.repo) of the pull request to merge.' }; break; }
       const bid = args.payload?.booking_id;
       if (bid && !q.get('SELECT id FROM bookings WHERE id=?', bid)) {
         out = { error: `No booking with id "${bid}". Use a real booking id: ${q.all('SELECT id, guest_name FROM bookings').map((b) => `${b.id} (${b.guest_name})`).join(', ')}.` };
@@ -140,6 +142,19 @@ export async function executeTool(agentId, runId, name, args) {
       break;
     }
     case 'log_note': audit(agentId, 'note', args.text); out = { ok: true }; break;
+    // GitHub (only offered in task steps the host started; see tasks.js STEP_TOOLS)
+    case 'github_open_pr': {
+      const termLog = String(runId).startsWith('task_') ? (kind, text) => taskLog(runId, kind, text) : () => {};
+      try {
+        out = await openPullRequest(args, termLog);
+        audit(agentId, 'action', `🔀 opened pull request #${out.pr_number} on ${out.repo}: ${args.title}`);
+      } catch (e) { out = { error: e.message }; }
+      break;
+    }
+    case 'github_pr_status': {
+      try { out = await pullRequestStatus(args); } catch (e) { out = { error: e.message }; }
+      break;
+    }
     case 'hire_agent': {
       // Only reachable when runAgent was given allowHiring (see HIRE_TOOL).
       try {

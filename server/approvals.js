@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { q, audit } from './db.js';
 import { emit } from './events.js';
 import { tts } from './mistral.js';
+import { mergePullRequest } from './github.js';
 
 const AUDIO_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data', 'audio');
 fs.mkdirSync(AUDIO_DIR, { recursive: true });
@@ -46,7 +47,7 @@ export function approvalAudioPath(id) {
   return fs.existsSync(p) ? p : null;
 }
 
-const ALLOWED_TYPES = new Set(['refund', 'discount', 'price_change', 'early_checkin', 'guest_message']);
+const ALLOWED_TYPES = new Set(['refund', 'discount', 'price_change', 'early_checkin', 'guest_message', 'deploy']);
 
 // Resolve exactly once. Returns {ok, alreadyResolved?} — the action runs only on the
 // first 'approved' resolution of a pending approval.
@@ -103,6 +104,22 @@ function executeAction(a) {
     }
     case 'guest_message': {
       if (p.booking_id && p.reply) sendGuestMessage(p.booking_id, p.reply, a.agent_id);
+      break;
+    }
+    case 'deploy': {
+      // Merge the agent's pull request (async). The result is stored on the approval so the
+      // task step can report it honestly.
+      mergePullRequest(p)
+        .then((r) => {
+          q.run('UPDATE approvals SET payload=? WHERE id=?', JSON.stringify({ ...p, merge: r }), a.id);
+          audit(a.agent_id, 'action', `🚀 merged PR #${p.pr_number} on ${p.repo || 'GitHub'} (${String(r.sha || '').slice(0, 7)})`);
+          emit('state');
+        })
+        .catch((e) => {
+          q.run('UPDATE approvals SET payload=? WHERE id=?', JSON.stringify({ ...p, merge: { merged: false, error: e.message } }), a.id);
+          audit(a.agent_id, 'action', `⚠️ merge of PR #${p.pr_number} failed: ${e.message}`);
+          emit('state');
+        });
       break;
     }
     default:

@@ -10,6 +10,7 @@ import { emit } from './events.js';
 import { chat, MOCK, TASK_MODEL } from './mistral.js';
 import { agentDef, executeTool, TOOLS } from './agents.js';
 import { createApproval, clearHand } from './approvals.js';
+import { GITHUB_ON, GITHUB_TOOLS, DEFAULT_REPO } from './github.js';
 
 const now = () => new Date().toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -17,7 +18,8 @@ const rid = (p) => p + '_' + Math.random().toString(36).slice(2, 8);
 const parse = (s, d) => { try { return s ? JSON.parse(s) : d; } catch { return d; } };
 const OPEN = "('planning','running','waiting_approval','replanning')";
 const STEP_TOOLS = TOOLS_WITHOUT(['send_visual_card']);
-function TOOLS_WITHOUT(names) { return () => TOOLS.filter((t) => !names.includes(t.function.name)); }
+// Task steps (host-started only) can also ship code to GitHub when a token is set.
+function TOOLS_WITHOUT(names) { return () => [...TOOLS.filter((t) => !names.includes(t.function.name)), ...(GITHUB_ON ? GITHUB_TOOLS : [])]; }
 
 export function getTask(id) {
   if (!id) return null;
@@ -98,8 +100,9 @@ async function planTask(agentId, goal) {
   const plan = await askJson(`${def.system}
 The host gave you, ${def.name}, this task: "${goal}"
 What you can see right now: ${JSON.stringify(facts())}
-Plan it as 3 to 6 steps you will really do with your tools (${tools}).
-Rules: plain everyday English for a non-technical host, no jargon. Each step: a short "title" (max 6 words) and one sentence "explain" saying what you'll do and why. Any step that sends a message to a guest, grants an early check-in, refunds or discounts, or changes a price must be its own step that asks the host to approve it (Raise Hand); set "needs_approval": true on it and say so in "explain". Use only the data above; don't invent guests or numbers.
+Plan it as 3 to 6 steps you will really do with your tools (${tools}). Every step must be done with one of those tools (or be a short decision based on their results). Never plan something you have no tool for, like testing in a browser, calling someone, or deploying without the tools above.
+Rules: plain everyday English for a non-technical host, no jargon. Each step: a short "title" (max 6 words) and one sentence "explain" saying what you'll do and why. Any step that sends a message to a guest, grants an early check-in, refunds or discounts, or changes a price must be its own step that asks the host to approve it (Raise Hand); set "needs_approval": true on it and say so in "explain". Use only the data above; don't invent guests or numbers.${GITHUB_ON ? `
+If the job is to build or ship code, a page or an integration: ONE step writes the code AND opens the pull request with github_open_pr (Codestral writes the files inside that call; no approval needed; use the repo the host named, default ${DEFAULT_REPO}; never a separate "write the code" step), and a later separate step asks the host to approve merging it (needs_approval: true, it calls request_approval type "deploy" with the pull request number). Keep code jobs to 3-4 steps.` : ''}
 Return: {"title": "short task name", "instructions": "one or two sentences restating what the host asked and the rules you'll follow", "expect": "one or two sentences on what the host will have at the end", "steps": [{"title": "...", "explain": "...", "needs_approval": false}]}`);
   if (!Array.isArray(plan.steps) || !plan.steps.length) throw new Error('the plan came back empty');
   return plan;
@@ -227,14 +230,19 @@ ${t.steps.map(stepLine).join('\n')}
 Data (use these exact ids): ${JSON.stringify(facts())}
 Do ONLY step ${idx + 1}: "${step.title}" — ${step.explain}
 Use your tools as needed. ${step.needs_approval
-    ? 'This step needs the host\'s approval: call request_approval exactly once, with the exact guest-facing text in payload.reply and the booking_id where relevant.'
+    ? 'This step needs the host\'s approval: call request_approval exactly once, with the exact guest-facing text in payload.reply and the booking_id where relevant. To merge/deploy a pull request use type "deploy" with payload {repo, pr_number, pr_url} from the earlier step\'s result.'
     : 'Do not call request_approval in this step.'}
-Finish with ONE short plain sentence saying what you found or did; it is shown to the host as this step's result.` },
+Only report what your tool calls in this step actually did. If you have no tool for something, say plainly that you couldn't do it; never claim you tested, sent, pushed or deployed anything a tool didn't do.
+Finish with ONE short plain sentence (no code, no markdown) saying what you found or did; it is shown to the host as this step's result.` },
   ];
   for (let i = 0; i < 5; i++) {
     const msg = await chat({ model: TASK_MODEL, messages, tools: STEP_TOOLS() });
     messages.push(msg);
-    if (!msg.tool_calls?.length) return { result: String(msg.content || 'Done.').slice(0, 300) };
+    if (!msg.tool_calls?.length) {
+      // One plain sentence for the step card: drop code blocks and markdown the model may add.
+      const text = String(msg.content || 'Done.').replace(/```[\s\S]*?(```|$)/g, ' ').replace(/[*#`>]+/g, '').replace(/\s+/g, ' ').trim();
+      return { result: (text || 'Done.').slice(0, 300) };
+    }
     for (const call of msg.tool_calls) {
       let args; try { args = JSON.parse(call.function.arguments || '{}'); } catch { args = {}; }
       const name = call.function.name;
@@ -243,7 +251,10 @@ Finish with ONE short plain sentence saying what you found or did; it is shown t
         continue;
       }
       log(t.id, 'cmd', `$ ${name} ${JSON.stringify(args).slice(0, 200)}`);
-      const out = await executeTool(t.agent_id, t.id, name, args);
+      // One pull request per task: a second github_open_pr gets the first one back.
+      const prev = name === 'github_open_pr' && openedPr.get(t.id);
+      const out = prev ? { ...prev, note: 'Already opened in this task; reuse this pull request.' } : await executeTool(t.agent_id, t.id, name, args);
+      if (name === 'github_open_pr' && out?.ok) openedPr.set(t.id, out);
       log(t.id, out?.error ? 'error' : 'out', `  ${out?.error ? '✗ ' + out.error : short(out)}`);
       if (name === 'request_approval' && out?.pending) return { approvalId: out.approval_id, summary: args.summary || step.title };
       messages.push({ role: 'tool', tool_call_id: call.id, name, content: JSON.stringify(out).slice(0, 2000) });
@@ -251,6 +262,8 @@ Finish with ONE short plain sentence saying what you found or did; it is shown t
   }
   return { result: 'I ran out of moves on this step, so I stopped here.' };
 }
+
+const openedPr = new Map(); // task id → the pull request it opened
 
 // Wait for the host's decision; re-plan meanwhile if they add something.
 async function waitForApproval(taskId, approvalId) {
@@ -264,6 +277,18 @@ async function waitForApproval(taskId, approvalId) {
     await sleep(1000);
   }
   return 'timeout';
+}
+
+// A deploy approval merges asynchronously; wait briefly so the step reports what really happened.
+async function waitForMerge(approvalId) {
+  const a0 = q.get('SELECT type FROM approvals WHERE id=?', approvalId);
+  if (a0?.type !== 'deploy') return null;
+  for (let i = 0; i < 20; i++) {
+    const m = parse(q.get('SELECT payload FROM approvals WHERE id=?', approvalId)?.payload, {});
+    if (m.merge) return m.merge.merged ? `Merged pull request #${m.pr_number} into main (${String(m.merge.sha || '').slice(0, 7)}): ${m.merge.url || m.pr_url || ''}` : `The merge failed: ${m.merge.error}`;
+    await sleep(500);
+  }
+  return 'Approved; the merge is still running on GitHub.';
 }
 
 async function execute(taskId) {
@@ -295,8 +320,9 @@ async function execute(taskId) {
         clearHand(t.agent_id);
         t = getTask(taskId); step = t.steps.find((s) => s.approval_id === r.approvalId);
         const ok = decision === 'approved';
-        Object.assign(step, { status: ok ? 'done' : 'skipped', ended_at: now(),
-          result: ok ? `You approved it, so it's done: ${r.summary}`.slice(0, 300) : decision === 'timeout' ? 'No answer in 30 minutes, so I skipped it.' : 'You said no, so this was not done.' });
+        let result = ok ? `You approved it, so it's done: ${r.summary}`.slice(0, 300) : decision === 'timeout' ? 'No answer in 30 minutes, so I skipped it.' : 'You said no, so this was not done.';
+        if (ok) { const merged = await waitForMerge(r.approvalId); if (merged) result = merged; }
+        Object.assign(step, { status: ok ? 'done' : 'skipped', ended_at: now(), result });
         t.status = 'running'; save(t);
         log(taskId, ok ? 'done' : 'skip', ok ? '✓ approved by you, done' : `↷ ${step.result}`);
         setAgent(t.agent_id, { status: 'working', current_task: t.title.slice(0, 60) });

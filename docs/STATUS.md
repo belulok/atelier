@@ -126,3 +126,15 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
   raises its own); `request_approval` rejects unknown booking ids.
 - Verified with the real key, end to end in a browser: task → workflow → late-checkout change (draft withdrawn and
   redone in German) → terminal → Approve → 5/5 done, German reply sent → switch to Theo.
+
+## Agents ship code to GitHub (done 2026-11-21, belulok)
+- Task steps can call `github_open_pr` (`server/github.js`): Codestral (`codestral-latest`) writes 1–4 files, then a
+  branch `atelier/...`, a commit and a pull request are created on the repo the host names (default `belulok/atelier`).
+  Files can only go under `agent-builds/<task>/`; one PR per task. Merging is a Raise Hand step: approval type
+  `deploy` merges the PR (squash) only after the host clicks "Approve & merge", and only `atelier/...` branches.
+  The terminal view shows the git steps and the PR link; step cards link the PR.
+- Needs `GITHUB_TOKEN` (fine-grained, `belulok/atelier` only, contents + pull requests) in the server `.env`.
+  Tested: Dev opened PR #2 on belulok/atelier with a Codestral-written page and raised the deploy approval.
+  The merge itself is untested end to end (it runs on the host's click).
+- Step prompts now forbid claiming actions no tool did (an earlier run "tested in a browser" and "pushed" with no tools).
+

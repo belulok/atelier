@@ -2,6 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import './tasks.css';
 
+// Turn URLs (e.g. a pull request) into links.
+export function linkify(text) {
+  return String(text || '').split(/(https?:\/\/[^\s)]+)/g).map((part, i) =>
+    /^https?:\/\//.test(part) ? <a key={i} href={part} target="_blank" rel="noreferrer">{part.replace(/^https?:\/\/(www\.)?/, '')}</a> : part);
+}
+
 // The workflow view of an agent task: a task card (what you asked, the instructions the
 // agent follows, what to expect, progress) and the steps as a pipeline of simple cards.
 // A step waiting for your approval shows the exact draft and Approve / Deny buttons.
@@ -72,17 +78,18 @@ export default function TaskBoard({ task, agentName, approvals = [] }) {
                 <p className="tb-explain">{s.explain}</p>
                 {s.status === 'waiting' && ap && (
                   <div className="tb-approve">
-                    {ap.payload?.reply && <blockquote>{ap.payload.reply}</blockquote>}
-                    {!ap.payload?.reply && <blockquote>{ap.summary}</blockquote>}
+                    {ap.type === 'deploy'
+                      ? <blockquote className="deploy">🚀 Merge pull request #{ap.payload?.pr_number} into main{ap.payload?.pr_url && <> · <a href={ap.payload.pr_url} target="_blank" rel="noreferrer">review it on GitHub</a></>}</blockquote>
+                      : <blockquote>{ap.payload?.reply || ap.summary}</blockquote>}
                     {ap.status === 'pending' && (
                       <div className="tb-buttons">
-                        <button className="ok" disabled={!!busy} onClick={() => decide(ap.id, 'approved')}>✓ Approve</button>
+                        <button className="ok" disabled={!!busy} onClick={() => decide(ap.id, 'approved')}>{ap.type === 'deploy' ? '🚀 Approve & merge' : '✓ Approve'}</button>
                         <button disabled={!!busy} onClick={() => decide(ap.id, 'denied')}>Deny</button>
                       </div>
                     )}
                   </div>
                 )}
-                {s.result && <div className="tb-result">{s.result}</div>}
+                {s.result && <div className="tb-result">{linkify(s.result)}</div>}
               </div>
             );
           })}
