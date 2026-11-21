@@ -63,3 +63,17 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
 - **Without a Mistral key** it uses the browser's speech recognition and voice (no silent failure).
 - **Verified:** build; endpoint tests; headless Chrome with a fake microphone (open, calibrate, detect speech, record
   WAV, upload, fall back to browser voice, close). **Not verified:** real Voxtral STT/TTS calls (no key in `.env`).
+
+
+## Hire a subagent by asking (done 2026-11-21)
+- In a chat or voice conversation, ask an agent to create a new agent or subagent ("Mila, create a subagent for
+  upsells"). The agent calls `hire_agent`: a name, role, department and job instructions it writes; the new agent
+  reports to the hiring agent (or another agent if asked), appears at a desk and in Simple mode
+  ("reports to Mila"), and uses its manager and instructions in its own prompt. Logged in the audit.
+- Hiring is offered only in conversations the host starts (chat, voice, instructions), never in automated runs
+  such as Simulate overnight, so content like a guest message can't trigger it. Office capped at 16 agents.
+- Fixes found on the way: built-in agents now get their own prompts (they matched the generic custom-agent
+  prompt before); workflow step data is stored as valid JSON when long (cutting it mid-string made
+  `GET /api/state` fail with 500 and broke live updates).
+- Verified with the real Mistral key: Mila hired "Nina, Upsells & Extras" by voice; Nina then answered by voice
+  with her manager and job. Shared code: `server/team.js` (API Hire button and the tool).

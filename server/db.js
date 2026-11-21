@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS thread_reads (thread_id TEXT, user_id TEXT, ts TEXT, 
 for (const col of ['idempotency_key TEXT', 'approved_by TEXT']) {
   try { db.exec(`ALTER TABLE approvals ADD COLUMN ${col}`); } catch {}
 }
+// hired subagents: who they report to and their job instructions (guarded for existing DBs)
+for (const col of ['reports_to TEXT', 'instructions TEXT']) {
+  try { db.exec(`ALTER TABLE agents ADD COLUMN ${col}`); } catch {}
+}
 
 export const q = {
   all: (sql, ...p) => db.prepare(sql).all(...p),
@@ -101,7 +105,7 @@ export function audit(agentId, kind, detail) {
 }
 
 export function snapshot() {
-  const agents = q.all(`SELECT s.*, a.name, a.role, a.department, a.desk AS meta_desk, a.floor, a.team AS meta_team, a.is_custom
+  const agents = q.all(`SELECT s.*, a.name, a.role, a.department, a.desk AS meta_desk, a.floor, a.team AS meta_team, a.is_custom, a.reports_to
     FROM agent_state s LEFT JOIN agents a ON a.id = s.agent_id ORDER BY s.agent_id`).map((r) => ({
     ...r,
     id: r.agent_id, // the 3D office keys characters by agent.id
@@ -113,8 +117,10 @@ export function snapshot() {
     desk: r.meta_desk || ({ mila: 1, theo: 2, priya: 3, sam: 4 }[r.agent_id] || 1),
     team: r.meta_team || ({ mila: 'content', theo: 'research', priya: 'software', sam: 'support' }[r.agent_id] || 'software'),
   }));
+  // Older rows were cut at 1500 chars mid-JSON; never let one bad row break the whole state.
+  const parse = (s) => { if (!s) return null; try { return JSON.parse(s); } catch { return { truncated: s }; } };
   const workflow = q.all('SELECT * FROM workflow_events ORDER BY id DESC LIMIT 120').reverse()
-    .map((e) => ({ ...e, input: e.input ? JSON.parse(e.input) : null, output: e.output ? JSON.parse(e.output) : null }));
+    .map((e) => ({ ...e, input: parse(e.input), output: parse(e.output) }));
   const threads = q.all('SELECT t.*, a.name AS agent_name FROM threads t LEFT JOIN agents a ON a.id=t.agent_id ORDER BY t.created_at DESC LIMIT 20').map((t) => {
     const msgs = q.all('SELECT * FROM thread_messages WHERE thread_id=? ORDER BY ts', t.id).map((m) => ({ ...m, card: m.card ? JSON.parse(m.card) : null }));
     const read = q.get('SELECT ts FROM thread_reads WHERE thread_id=? AND user_id=?', t.id, 'host');

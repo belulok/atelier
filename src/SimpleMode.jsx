@@ -140,7 +140,7 @@ export default function SimpleMode({ state, voiceReply, onExit }) {
           <button key={agent.id} className="s-thread" onClick={() => openThread(agent.id)}>
             <span className="s-avatar"><AgentHead size={38} color={TEAM_COLORS[agent.team] || '#f3b91f'} /></span>
             <span className="s-thread-mid">
-              <b>{agent.name}</b><small>{agent.role}</small>
+              <b>{agent.name}</b><small>{agent.role}{agent.reports_to ? ` · reports to ${agents.find((x) => x.id === agent.reports_to)?.name || 'a teammate'}` : ''}</small>
               <small className="s-preview">{thread?.messages?.length ? thread.messages[thread.messages.length - 1].text.slice(0, 60) : 'No messages yet'}</small>
             </span>
             <span className="s-thread-right">

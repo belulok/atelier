@@ -9,6 +9,7 @@ import { onEvent, emit } from './events.js';
 import { getApproval, resolveApproval, approvalAudioPath } from './approvals.js';
 import { notifyApprovalResolved, runAgent, instruct, askAboutStep, agentDef } from './agents.js';
 import { simulateOvernight, morningBriefing } from './simulate.js';
+import { DEPARTMENTS, hireAgent } from './team.js';
 import { stt, tts, chat, MOCK, MODEL } from './mistral.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -85,19 +86,12 @@ app.get('/api/audio/:name', (req, res) => {
 });
 
 // --- F1: team builder (create / rename / delete agents) ------------------------
-const DEPARTMENTS = { 'Guest Experience': { floor: 1, team: 'content' }, 'Operations': { floor: 2, team: 'research' }, 'The Studio': { floor: 3, team: 'software' }, 'Support': { floor: 1, team: 'support' } };
 app.post('/api/agents', (req, res) => {
-  const { name, role, department, desk } = req.body || {};
-  if (!name || !role) return res.status(400).json({ error: 'name and role required' });
-  const id = 'agent_' + Math.random().toString(36).slice(2, 9);
-  const dept = DEPARTMENTS[department] || DEPARTMENTS['Operations'];
-  const deskN = Math.min(8, Math.max(1, parseInt(desk, 10) || (q.all('SELECT desk FROM agents').length % 8) + 1));
-  q.run('INSERT INTO agents (id,name,role,department,desk,floor,team,is_custom,created_at) VALUES (?,?,?,?,?,?,?,1,?)',
-    id, name, role, department || 'Operations', deskN, dept.floor, dept.team, new Date().toISOString());
-  q.run('INSERT INTO agent_state (agent_id,status,current_task,memory) VALUES (?,?,?,?)', id, 'idle', `${role} — ready`, '[]');
-  audit(id, 'system', `🧑‍💼 agent hired: ${name} (${role}, ${department || 'Operations'}, desk ${deskN})`);
-  emit('state');
-  res.json({ ok: true, id });
+  const { name, role, department, desk, instructions, reports_to } = req.body || {};
+  try {
+    const agent = hireAgent({ name, role, department, desk, instructions, reportsTo: reports_to });
+    res.json({ ok: true, id: agent.id, agent });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.patch('/api/agents/:id', (req, res) => {
   const { name, role, department, desk } = req.body || {};
@@ -179,7 +173,7 @@ app.post('/api/threads/:id/messages', async (req, res) => {
   emit('state');
   res.json({ ok: true, id: mid });
   // agent replies in the thread; a visual card (if any) is attached to the reply
-  const r = await runAgent(t.agent_id, `Chat thread with the host: "${text}". Reply concisely as ${agentDef(t.agent_id)?.name || t.agent_id}. If a checklist/table/timeline/chart would help, call send_visual_card before your final reply.`);
+  const r = await runAgent(t.agent_id, `Chat thread with the host: "${text}". Reply concisely as ${agentDef(t.agent_id)?.name || t.agent_id}. If a checklist/table/timeline/chart would help, call send_visual_card before your final reply.`, { allowHiring: true });
   const rid = 'tm_' + Math.random().toString(36).slice(2, 9);
   q.run('INSERT INTO thread_messages (id,thread_id,from_side,text,card,run_id,ts) VALUES (?,?,?,?,?,?,?)',
     rid, t.id, 'agent', r.final, r.card ? JSON.stringify(r.card) : null, r.runId, new Date().toISOString());
@@ -204,7 +198,7 @@ app.post('/api/threads/:id/voice-turn', async (req, res) => {
     'tm_' + Math.random().toString(36).slice(2, 9), t.id, 'host', text, new Date().toISOString());
   emit('state');
   try {
-    const r = await runAgent(t.agent_id, `Voice conversation with the host (your reply is spoken aloud): "${text}". Reply as ${name} in one to three short, natural spoken sentences. No markdown, lists or emoji.`);
+    const r = await runAgent(t.agent_id, `Voice conversation with the host (your reply is spoken aloud): "${text}". Reply as ${name} in one to three short, natural spoken sentences. No markdown, lists or emoji.`, { allowHiring: true });
     const reply = r.final || '';
     q.run('INSERT INTO thread_messages (id,thread_id,from_side,text,card,run_id,ts) VALUES (?,?,?,?,?,?,?)',
       'tm_' + Math.random().toString(36).slice(2, 9), t.id, 'agent', reply, r.card ? JSON.stringify(r.card) : null, r.runId, new Date().toISOString());

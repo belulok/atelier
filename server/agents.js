@@ -7,6 +7,7 @@ import { q, audit } from './db.js';
 import { emit } from './events.js';
 import { chat, MOCK } from './mistral.js';
 import { createApproval, clearHand, ALLOWED_TYPES } from './approvals.js';
+import { DEPARTMENTS, hireAgent } from './team.js';
 
 export const DEFAULT_AGENTS = {
   mila: { name: 'Mila', role: 'Guest Concierge', department: 'Guest Experience', system: `You are Mila, the Guest Concierge for a solo London Airbnb host. You reply to guests in the guest's own language (check bookings.guest_lang). You read and triage guest messages. You NEVER send a message to a guest, issue a refund/discount, change a price or grant early check-in without the host's approval — call request_approval with a clear summary and the exact reply text in payload.reply. Only report actions that actually happened (tool results tell you). Be warm, concise, professional.` },
@@ -15,12 +16,34 @@ export const DEFAULT_AGENTS = {
   sam: { name: 'Sam', role: 'Reviews & Reputation', department: 'Guest Experience', system: `You are Sam, Reviews & Reputation for a solo London short-let host. You monitor guest sentiment and draft review responses. Replying to a guest publicly or privately needs host approval via request_approval type 'guest_message'. Only report actions that actually happened.` },
 };
 
-// Agent definition from DB (custom agents) with fallback to defaults.
+// Agent definition: built-in agents keep their own prompts (they are also rows in
+// `agents`, with is_custom = 0); hired agents get the shared rules plus their manager
+// and job instructions.
 export function agentDef(agentId) {
   const row = q.get('SELECT * FROM agents WHERE id=?', agentId);
-  if (row) return { name: row.name, role: row.role, department: row.department, system: `You are ${row.name}, ${row.role} in the ${row.department} department of a solo London short-let host's AI back office. Follow the same rules as your teammates: tools read/write only the host's data; refunds, discounts, price changes, early check-ins and guest messages need the host's approval via request_approval; only report actions that actually happened. When replying in a chat thread, use send_visual_card if a checklist/table/timeline/chart would help.` };
-  return DEFAULT_AGENTS[agentId];
+  const builtIn = DEFAULT_AGENTS[agentId];
+  if (row && !row.is_custom && builtIn) return { ...builtIn, name: row.name, role: row.role, department: row.department };
+  if (row) {
+    const boss = row.reports_to ? q.get('SELECT name, role FROM agents WHERE id=?', row.reports_to) : null;
+    return { name: row.name, role: row.role, department: row.department, system: `You are ${row.name}, ${row.role} in the ${row.department} department of a solo London short-let host's AI back office.`
+      + (boss ? ` You are a subagent working under ${boss.name} (${boss.role}).` : '')
+      + (row.instructions ? ` Your job: ${row.instructions}` : '')
+      + ` Follow the same rules as your teammates: tools read/write only the host's data; refunds, discounts, price changes, early check-ins and guest messages need the host's approval via request_approval; only report actions that actually happened. When replying in a chat thread, use send_visual_card if a checklist/table/timeline/chart would help.` };
+  }
+  return builtIn;
 }
+
+// Hiring is offered only in conversations the host started (chat, voice, instructions),
+// never in automated runs, so content like a guest message can't make an agent hire.
+export const HIRE_TOOL = { type: 'function', function: { name: 'hire_agent',
+  description: `Hire a new AI agent (a subagent) into the office. Use ONLY when the host explicitly asks you to create, hire or add a new agent or subagent. Pick a short human first name, a clear role, a department (one of: ${Object.keys(DEPARTMENTS).join(', ')}) and 1–3 sentences of instructions describing its job. By default it reports to you; set reports_to to another agent's id only if the host asks.`,
+  parameters: { type: 'object', properties: {
+    name: { type: 'string', description: 'Short human first name' },
+    role: { type: 'string', description: 'Job title, e.g. "Upsells & Extras"' },
+    department: { type: 'string', enum: Object.keys(DEPARTMENTS) },
+    instructions: { type: 'string', description: 'What the new agent does, in 1–3 sentences' },
+    reports_to: { type: 'string', description: 'Optional agent id it reports to (default: you)' },
+  }, required: ['name', 'role', 'department', 'instructions'] } } };
 
 export const TOOLS = [
   { type: 'function', function: { name: 'get_overview', description: 'Flats, bookings, unread guest messages, cleaning jobs. Call this first.', parameters: { type: 'object', properties: {} } } },
@@ -46,12 +69,20 @@ export const TOOLS = [
 
 // ---- workflow events (F3 inspector) ------------------------------------------
 let seqByRun = new Map();
+// Store step data as valid JSON even when it's long: cutting the JSON text itself
+// leaves an unterminated string that breaks every later state snapshot.
+function clipJson(value, max = 1500) {
+  if (value == null) return null;
+  const s = JSON.stringify(value);
+  return s.length <= max ? s : JSON.stringify({ truncated: s.slice(0, max - 40) + '…' });
+}
+
 export function wf(agentId, runId, node, kind, input, output, durationMs, status) {
   const seq = (seqByRun.get(runId) || 0) + 1; seqByRun.set(runId, seq);
   q.run('INSERT INTO workflow_events (ts,agent_id,run_id,seq,node,kind,input,output,duration_ms,status) VALUES (?,?,?,?,?,?,?,?,?,?)',
     new Date().toISOString(), agentId, runId, seq, node, kind,
-    input ? JSON.stringify(input).slice(0, 1500) : null,
-    output ? JSON.stringify(output).slice(0, 1500) : null,
+    clipJson(input),
+    clipJson(output),
     durationMs ?? null, status);
   q.run('DELETE FROM workflow_events WHERE id NOT IN (SELECT id FROM workflow_events ORDER BY id DESC LIMIT 200)');
   emit('state');
@@ -100,6 +131,14 @@ async function executeTool(agentId, runId, name, args) {
       break;
     }
     case 'log_note': audit(agentId, 'note', args.text); out = { ok: true }; break;
+    case 'hire_agent': {
+      // Only reachable when runAgent was given allowHiring (see HIRE_TOOL).
+      try {
+        const hired = hireAgent({ ...args, reportsTo: args.reports_to || agentId, hiredBy: agentDef(agentId)?.name || agentId });
+        out = { ok: true, hired };
+      } catch (e) { out = { error: e.message }; }
+      break;
+    }
     default: out = { error: 'unknown tool ' + name };
   }
   wf(agentId, runId, name, 'tool', args, out, Date.now() - t0, out?.error ? 'error' : 'done');
@@ -150,7 +189,7 @@ export async function runAgent(agentId, userPrompt, opts = {}) {
   try {
     for (let i = 0; i < 6; i++) {
       const t0 = Date.now();
-      const msg = await chat({ messages, tools: TOOLS });
+      const msg = await chat({ messages, tools: opts.allowHiring ? [...TOOLS, HIRE_TOOL] : TOOLS });
       wf(agentId, runId, `llm_step_${i + 1}`, 'llm', { model: 'mistral' }, msg.tool_calls?.length ? { tool_calls: msg.tool_calls.map(c => c.function.name) } : { reply: (msg.content || '').slice(0, 300) }, Date.now() - t0, 'done');
       messages.push(msg);
       if (!msg.tool_calls?.length) {
@@ -192,7 +231,7 @@ export async function runAgent(agentId, userPrompt, opts = {}) {
 }
 
 // Voice / chat instruction entry point (F4/F5).
-export function instruct(agentId, text) { return runAgent(agentId, text); }
+export function instruct(agentId, text) { return runAgent(agentId, text, { allowHiring: true }); }
 
 // "Ask about this step" (F3): answer with Mistral using the node's data as context.
 export async function askAboutStep(agentId, nodeId, question) {
