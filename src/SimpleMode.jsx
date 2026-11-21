@@ -18,18 +18,24 @@ export default function SimpleMode({ state, voiceReply, onExit }) {
   const talkingRef = useRef(false);
   const recRef = useRef(null);
   const srRef = useRef(null);
+  // Quick Glance is armed ONLY when the popup itself is (re)opened; sending messages,
+  // receiving replies or switching chats inside the popup never re-shows it.
+  const glanceArmedRef = useRef(true);
 
   const agents = state?.agents || [];
   const threads = state?.threads || [];
   const active = threads.find((t) => t.id === threadId);
 
-  // open thread → if there is agent activity since last read, fetch the Quick Glance
   useEffect(() => {
+    if (!glanceArmedRef.current || !threadId || !active) return;
+    glanceArmedRef.current = false; // consume: once per popup opening
     setGlance(null); setShowChat(false);
-    if (threadId && active && active.unread > 0) {
-      api(`/threads/${threadId}/glance`, { method: 'POST' }).then(setGlance).catch(() => {});
+    if (active.unread > 0) {
+      api(`/threads/${threadId}/glance`, { method: 'POST' })
+        .then((g) => { setGlance(g); api(`/threads/${threadId}/read`, { method: 'POST' }).catch(() => {}); })
+        .catch(() => {});
     }
-  }, [threadId, active?.last_message_at]);
+  }, [threadId, active?.unread, active?.last_message_at]);
 
   // voice_reply SSE (server TTS of agent replies) → play, then keep listening if talking
   useEffect(() => {
@@ -38,7 +44,7 @@ export default function SimpleMode({ state, voiceReply, onExit }) {
 
   const openThread = async (agentId) => {
     const { thread } = await api('/threads', { method: 'POST', body: { agent_id: agentId } });
-    setThreadId(thread.id);
+    setThreadId(thread.id); // does NOT re-arm the glance: only a fresh popup opening does
   };
 
   const send = async (msg, voice = false) => {
