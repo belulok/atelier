@@ -51,5 +51,15 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
 - 2026-11-21 Phase 1: F1–F5 implemented + verified (API curl + headless-Chrome screenshots, zero console errors). Server restarted; vite HMR picked up client changes.
 - 2026-11-21 Modes: Simple/Advanced toggle + Quick Glance + voice conversation added (see Modes section). Verified desktop popup (1440px) and mobile full-screen (390px) screenshots.
 
-## In progress
-- belulok · Voice conversation like ChatGPT voice mode, using the agent's face: fix STT upload (raw WAV), Voxtral TTS (voice_id + base64 response), automatic turn-taking, interrupting the agent by speaking, browser-speech fallback without a key · `src/voice/*`, `src/SimpleMode.jsx`, `src/office/AgentHead.jsx`, `src/api.js`, `server/mistral.js`, `server/index.js`
+
+## Voice conversation (done 2026-11-21)
+- **Voice screen like ChatGPT voice mode, with the agent's face** (Simple mode → open a chat → 🎙️ or tap the face).
+  Hands-free turns: it detects when you start and stop talking, the agent answers out loud, and talking over the
+  agent interrupts it. Each turn is saved in the chat thread. Files: `src/voice/engine.js`, `src/voice/VoiceMode.jsx`,
+  `src/voice/wav.js`, `src/voice/voice.css`, `src/office/AgentHead.jsx` (optional `mouth`/`blink`).
+- **Fixes:** STT upload now sends raw audio (it was multipart, so Voxtral got a corrupted file); recordings are 16 kHz
+  WAV; Voxtral TTS sends `voice_id` (`VOXTRAL_VOICE`, default `gb_jane_neutral`), defaults to `voxtral-mini-tts-3-0`
+  and reads the base64 `audio_data` response; new `POST /api/threads/:id/voice-turn` returns reply + audio together.
+- **Without a Mistral key** it uses the browser's speech recognition and voice (no silent failure).
+- **Verified:** build; endpoint tests; headless Chrome with a fake microphone (open, calibrate, detect speech, record
+  WAV, upload, fall back to browser voice, close). **Not verified:** real Voxtral STT/TTS calls (no key in `.env`).
