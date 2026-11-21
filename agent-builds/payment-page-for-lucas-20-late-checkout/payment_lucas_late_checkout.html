@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment for Late Checkout</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .booking-details, .payment-details {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .booking-details h2, .payment-details h2 {
+            margin-top: 0;
+            color: #555;
+        }
+        .booking-details p, .payment-details p {
+            margin: 5px 0;
+        }
+        .pay-button {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            background-color: #4CAF50;
+            color: white;
+            text-align: center;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .pay-button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Payment for Late Checkout</h1>
+        <div class="booking-details">
+            <h2>Booking Details</h2>
+            <p><strong>Booking ID:</strong> bk2</p>
+            <p><strong>Property:</strong> Flat 2 · Notting Hill 1-Bed</p>
+        </div>
+        <div class="payment-details">
+            <h2>Payment Details</h2>
+            <p><strong>Amount:</strong> £20.00</p>
+            <p><strong>Description:</strong> Late checkout fee</p>
+        </div>
+        <button class="pay-button" onclick="payNow()">Pay Now</button>
+    </div>
+
+    <script>
+        function payNow() {
+            // TODO: Replace with actual payment processing logic
+            // For now, just show an alert
+            alert('Payment processing would go here. Please contact IT to set up payment processing.');
+        }
+    </script>
+</body>
+</html>
