@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment for Late Checkout</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f4f4f4;
+        }
+        .payment-container {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        .amount {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+        .reason {
+            margin: 20px 0;
+            color: #666;
+        }
+        .pay-button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .pay-button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div class="payment-container">
+        <div class="amount">£20.00</div>
+        <div class="reason">Payment for late checkout</div>
+        <button class="pay-button" onclick="pay()">Pay Now</button>
+    </div>
+
+    <script>
+        function pay() {
+            // TODO: Replace with actual payment processing logic
+            // This is a placeholder for the payment processing function
+            alert("Payment processing is not yet implemented. Please contact IT for assistance.");
+        }
+    </script>
+</body>
+</html>
