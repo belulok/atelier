@@ -103,3 +103,5 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
 - Voice mode used to cover the whole screen; it now opens inside the Simple mode chat box, in place of the
   messages, under the box's own header (`embedded` prop on `src/voice/VoiceMode.jsx`, `.vm-embedded` in
   `src/voice/voice.css`, `src/SimpleMode.jsx`). Phone width: the box is full screen, so voice is too.
+- Clicking empty office space (a click, not a drag) or pressing Esc closes the Simple mode popup; clicking an
+  agent still opens its chat (`onEmptyClick` through `createOffice.js` → `OfficeCanvas` → `OfficeExperience` → `App`).

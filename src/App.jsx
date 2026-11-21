@@ -29,6 +29,13 @@ export default function App() {
   const openThreadRef = useRef(null); // set by SimpleMode: open chat with an agent from the 3D office
   const [voiceReply, setVoiceReply] = useState(null);
   useEffect(() => { try { localStorage.setItem('atelier-mode', mode); } catch {} }, [mode]);
+  // Esc closes the Simple mode popup (clicking empty office space does too, via OfficeExperience).
+  useEffect(() => {
+    if (mode !== 'simple') return;
+    const onKey = (e) => { if (e.key === 'Escape' && !document.querySelector('dialog[open]')) setMode('advanced'); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mode]);
   const audioRef = useRef(null);
   const playedRef = useRef(new Set());
   const mediaRef = useRef(null);
@@ -177,7 +184,8 @@ export default function App() {
 
       <main className="main workplace-main">
         <OfficeExperience agents={agents} onInspect={(id) => setInspector({ agentId: id })}
-          onAgentChat={mode === 'simple' ? (id) => openThreadRef.current?.(id) : undefined} />
+          onAgentChat={mode === 'simple' ? (id) => openThreadRef.current?.(id) : undefined}
+          onEmptyClick={mode === 'simple' ? () => setMode('advanced') : undefined} />
         {mode === 'simple' && (
           <div className="simple-backdrop">
             <SimpleMode state={state} voiceReply={voiceReply} onExit={() => setMode('advanced')} registerOpen={(fn) => { openThreadRef.current = fn; }} />

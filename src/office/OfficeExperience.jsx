@@ -20,7 +20,7 @@ function labelStatus(person) {
   return person.activity || (person.status === 'idle' ? 'Ready for the next task' : person.current_task || person.status);
 }
 
-export default function OfficeExperience({ agents, onInspect, onAgentChat }) {
+export default function OfficeExperience({ agents, onInspect, onAgentChat, onEmptyClick }) {
   const [session, setSession] = useState(storedSession);
   const [view, setView] = useState('floor');
   const [scope, setScope] = useState('floor');
@@ -124,7 +124,7 @@ export default function OfficeExperience({ agents, onInspect, onAgentChat }) {
       </div>
       <div className="scene-world">
         <OfficeCanvas agents={occupants} selectedId={selectedId} onSelect={handleSelect} onPresence={setBubbles}
-          floorId={session.floor} view={view} cameraRequest={cameraRequest} onFloorSelect={visit} onLift={() => setLiftOpen(true)} onFloorLabels={setFloorLabels} />
+          floorId={session.floor} view={view} cameraRequest={cameraRequest} onFloorSelect={visit} onLift={() => setLiftOpen(true)} onFloorLabels={setFloorLabels} onEmptyClick={onEmptyClick} />
         {view === 'building' && <div className="building-markers">{floorLabels.filter(f => f.visible).map(label => {const f = FLOORS[label.id];return <button key={f.id} style={{left:label.x,top:label.y,'--floor-color':f.color}} className={`building-label ${f.id===session.floor?'current':''}`} onClick={() => visit(f.id)} aria-label={`Enter ${f.name}`}><b>{f.code}</b><span>{f.name}{f.id===session.floor && <small>You are here</small>}</span></button>;})}</div>}
         <div className="bubbles">
           {view === 'floor' && !travel && visibleBubbles.map(b => {
@@ -144,7 +144,7 @@ export default function OfficeExperience({ agents, onInspect, onAgentChat }) {
         <button onClick={() => camera('zoom',1/1.2)} aria-label="Zoom out"><Icon name="minus" size={17}/></button>
         <button onClick={() => camera('reset')} aria-label="Reset camera"><Icon name="reset" size={17}/></button>
       </div>
-      <div className="stage-hint">Drag to look around <span>·</span> Scroll to zoom <span>·</span> {onAgentChat ? 'Click an agent to open the chat' : 'Select a teammate'}</div>
+      <div className="stage-hint">Drag to look around <span>·</span> Scroll to zoom <span>·</span> {onAgentChat ? 'Click an agent to open the chat · click anywhere else to close' : 'Select a teammate'}</div>
       <div className="work-session-bar">
         <div className={`session-avatar ${session.active ? 'working' : ''}`}><span>Y</span><i/></div>
         <div className="session-location"><strong>{session.active ? 'You’re at work' : 'Make yourself at home'}</strong><span><Icon name="pin" size={12}/>{floor.name} · Level {floor.code}</span></div>

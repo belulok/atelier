@@ -134,6 +134,7 @@ export default function createOffice(host, state, onReady = () => {}) {
     if (target?.floor !== undefined) state.current.onFloorSelect?.(target.floor);
     else if (target?.elevator) state.current.onLift?.();
     else if (target?.agent) state.current.onSelect?.(target.agent);
+    else state.current.onEmptyClick?.(); // a click (not a drag) on empty office space
   };
   const leave = () => { hovered = null;pointerStart = null; };
   for (const [name, fn] of [['pointerdown', down], ['pointerup', up], ['pointermove', move], ['pointerleave', leave]]) renderer.domElement.addEventListener(name, fn);

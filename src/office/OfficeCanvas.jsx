@@ -3,7 +3,7 @@ import createOffice from '../office3d/createOffice.js';
 
 // Wraps the reference 3D office. `agents` come from the server (source of truth);
 // presence callbacks give us screen positions for the HTML status bubbles.
-export default function OfficeCanvas({ agents, selectedId, onPresence, onSelect, floorId, view, cameraRequest, onFloorSelect, onLift, onFloorLabels }) {
+export default function OfficeCanvas({ agents, selectedId, onPresence, onSelect, floorId, view, cameraRequest, onFloorSelect, onLift, onFloorLabels, onEmptyClick }) {
   const hostRef = useRef(null);
   const officeRef = useRef(null);
   const stateRef = useRef({ current: {} });
@@ -18,6 +18,7 @@ export default function OfficeCanvas({ agents, selectedId, onPresence, onSelect,
   stateRef.current.cameraRequest = cameraRequest;
   stateRef.current.onFloorSelect = onFloorSelect;
   stateRef.current.onLift = onLift;
+  stateRef.current.onEmptyClick = onEmptyClick;
   stateRef.current.onFloorLabels = onFloorLabels;
 
   useEffect(() => {
