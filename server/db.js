@@ -122,7 +122,7 @@ export function snapshot() {
   const workflow = q.all('SELECT * FROM workflow_events ORDER BY id DESC LIMIT 120').reverse()
     .map((e) => ({ ...e, input: parse(e.input), output: parse(e.output) }));
   const threads = q.all('SELECT t.*, a.name AS agent_name FROM threads t LEFT JOIN agents a ON a.id=t.agent_id ORDER BY t.created_at DESC LIMIT 20').map((t) => {
-    const msgs = q.all('SELECT * FROM thread_messages WHERE thread_id=? ORDER BY ts', t.id).map((m) => ({ ...m, card: m.card ? JSON.parse(m.card) : null }));
+    const msgs = q.all('SELECT * FROM thread_messages WHERE thread_id=? ORDER BY ts', t.id).map((m) => ({ ...m, card: parse(m.card) }));
     const read = q.get('SELECT ts FROM thread_reads WHERE thread_id=? AND user_id=?', t.id, 'host');
     const lastMsg = msgs[msgs.length - 1];
     const unread = read ? msgs.filter((m) => m.ts > read.ts && m.from_side === 'agent').length : msgs.filter((m) => m.from_side === 'agent').length;
@@ -135,7 +135,7 @@ export function snapshot() {
     messages: q.all('SELECT * FROM messages ORDER BY ts'),
     jobs: q.all('SELECT * FROM cleaning_jobs ORDER BY date'),
     rates: q.all('SELECT r.*, (SELECT COUNT(*) FROM bookings b WHERE b.flat_id=r.flat_id AND b.status NOT IN (\'cancelled\') AND b.checkin <= r.date AND b.checkout > r.date) AS booked FROM rates r ORDER BY r.flat_id, r.date'),
-    approvals: q.all('SELECT * FROM approvals ORDER BY created_at DESC LIMIT 20').map((a) => ({ ...a, payload: a.payload ? JSON.parse(a.payload) : null })),
+    approvals: q.all('SELECT * FROM approvals ORDER BY created_at DESC LIMIT 20').map((a) => ({ ...a, payload: parse(a.payload) })),
     audit: q.all('SELECT * FROM audit ORDER BY id DESC LIMIT 60'),
     workflow,
     threads,

@@ -120,8 +120,9 @@ app.delete('/api/agents/:id', (req, res) => {
 
 // --- F3: workflow inspector ------------------------------------------------------
 app.get('/api/agents/:id/workflow', (req, res) => {
+  const safe = (s) => { if (!s) return null; try { return JSON.parse(s); } catch { return { truncated: s }; } };
   res.json(q.all('SELECT * FROM workflow_events WHERE agent_id=? ORDER BY id DESC LIMIT 120', req.params.id).reverse()
-    .map((e) => ({ ...e, input: e.input ? JSON.parse(e.input) : null, output: e.output ? JSON.parse(e.output) : null })));
+    .map((e) => ({ ...e, input: safe(e.input), output: safe(e.output) })));
 });
 app.post('/api/agents/:id/ask', async (req, res) => {
   try { res.json(await askAboutStep(req.params.id, Number(req.body?.node_id), String(req.body?.question || ''))); }

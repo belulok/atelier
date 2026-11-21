@@ -87,3 +87,14 @@ F9 conflict radar, F10 Janitor/Auditor, F11 offline mode.
   The 7 sample *people* stay as decoration.
 - New `agents.owner` column; a coworker's agent knows whose agent it is. Verified with the real key: Pip
   answers by voice as Alex's agent.
+
+### Done: simple mode — click an agent in the 3D office to open the chat (belulok)
+- The simple-mode popup no longer swallows the whole screen: the dim backdrop is `pointer-events: none`,
+  so the office around the popup stays live. On wide desktop (>=1100px) the popup docks to the right;
+  below that it is centered; <=680px it is full-screen (mobile unchanged).
+- Clicking an agent (3D character or floating name tag) in simple mode opens that agent's chat in the
+  popup (`onAgentChat` in `OfficeExperience`, `registerOpen` in `SimpleMode`); non-agent clicks do nothing.
+  In advanced mode the people sidebar still opens as before. Exit simple mode via the "Advanced" button
+  or the topbar toggle (now clickable again through the backdrop).
+- Fixed a 500 on `GET /api/state`: old rows had JSON columns cut mid-string; all reads now parse safely
+  (`safeJson`/`parse`) and 7 bad rows in `data/host.db` were repaired.

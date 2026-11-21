@@ -26,6 +26,7 @@ export default function App() {
   const [handsfree, setHandsfree] = useState(false);
   const handsfreeRef = useRef(false);
   const [mode, setMode] = useState(() => { try { return localStorage.getItem('atelier-mode') || 'advanced'; } catch { return 'advanced'; } });
+  const openThreadRef = useRef(null); // set by SimpleMode: open chat with an agent from the 3D office
   const [voiceReply, setVoiceReply] = useState(null);
   useEffect(() => { try { localStorage.setItem('atelier-mode', mode); } catch {} }, [mode]);
   const audioRef = useRef(null);
@@ -175,10 +176,11 @@ export default function App() {
       {voiceNote && <div className="voice-note">🎙️ {voiceNote}</div>}
 
       <main className="main workplace-main">
-        <OfficeExperience agents={agents} onInspect={(id) => setInspector({ agentId: id })}/>
+        <OfficeExperience agents={agents} onInspect={(id) => setInspector({ agentId: id })}
+          onAgentChat={mode === 'simple' ? (id) => openThreadRef.current?.(id) : undefined} />
         {mode === 'simple' && (
-          <div className="simple-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setMode('advanced'); }}>
-            <SimpleMode state={state} voiceReply={voiceReply} onExit={() => setMode('advanced')} />
+          <div className="simple-backdrop">
+            <SimpleMode state={state} voiceReply={voiceReply} onExit={() => setMode('advanced')} registerOpen={(fn) => { openThreadRef.current = fn; }} />
           </div>
         )}
         {briefing && <div className="briefing card workspace-briefing"><div className="card-title">Morning briefing <button className="x" aria-label="Close briefing" onClick={() => setBriefing(null)}>✕</button></div><p>{briefing.text}</p></div>}

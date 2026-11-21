@@ -9,7 +9,7 @@ const TEAM_COLORS = { software: '#3279e8', research: '#24ad68', content: '#f3b91
 // SIMPLE MODE: 100% chat. A list of threads ("all your chats"); tapping one opens a
 // Quick Glance card (summary since last read, progress, what changed, suggestions) with
 // a "View conversation" button for the full thread. Voice = Voxtral back-and-forth.
-export default function SimpleMode({ state, voiceReply, onExit }) {
+export default function SimpleMode({ state, voiceReply, onExit, registerOpen }) {
   const [threadId, setThreadId] = useState(null);
   const [showChat, setShowChat] = useState(false);
   const [glance, setGlance] = useState(null);
@@ -43,6 +43,9 @@ export default function SimpleMode({ state, voiceReply, onExit }) {
     const { thread } = await api('/threads', { method: 'POST', body: { agent_id: agentId } });
     setThreadId(thread.id); // does NOT re-arm the glance: only a fresh popup opening does
   };
+
+  // Let the 3D office (visible around the popup in simple mode) open this chat on agent click.
+  useEffect(() => { registerOpen?.(openThread); }, [registerOpen]);
 
   const send = async (msg, voice = false) => {
     if (!msg?.trim() || !threadId) return;

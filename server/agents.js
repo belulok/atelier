@@ -77,6 +77,8 @@ function clipJson(value, max = 1500) {
   const s = JSON.stringify(value);
   return s.length <= max ? s : JSON.stringify({ truncated: s.slice(0, max - 40) + '…' });
 }
+// Old rows may hold JSON that was cut mid-string; never let one bad row break a read.
+function safeJson(s) { if (!s) return null; try { return JSON.parse(s); } catch { return { truncated: s }; } }
 
 export function wf(agentId, runId, node, kind, input, output, durationMs, status) {
   const seq = (seqByRun.get(runId) || 0) + 1; seqByRun.set(runId, seq);
@@ -239,11 +241,11 @@ export async function askAboutStep(agentId, nodeId, question) {
   const node = q.get('SELECT * FROM workflow_events WHERE id=? AND agent_id=?', nodeId, agentId);
   if (!node) throw new Error('node not found');
   const siblings = q.all('SELECT * FROM workflow_events WHERE run_id=? ORDER BY seq', node.run_id)
-    .map((e) => ({ ...e, input: e.input ? JSON.parse(e.input) : null, output: e.output ? JSON.parse(e.output) : null }));
-  const prompt = `You are ${agentDef(agentId)?.name || agentId} in the Atelier office. The host asks about one step of your current workflow.\nStep: ${JSON.stringify({ ...node, input: node.input ? JSON.parse(node.input) : null, output: node.output ? JSON.parse(node.output) : null })}\nWorkflow so far: ${JSON.stringify(siblings.map(s => ({ node: s.node, kind: s.kind, status: s.status })))}\nQuestion: ${question}\nAnswer in 1-3 sentences, grounded only in the step data above. Say honestly if the data doesn't cover it.`;
+    .map((e) => ({ ...e, input: safeJson(e.input), output: safeJson(e.output) }));
+  const prompt = `You are ${agentDef(agentId)?.name || agentId} in the Atelier office. The host asks about one step of your current workflow.\nStep: ${JSON.stringify({ ...node, input: safeJson(node.input), output: safeJson(node.output) })}\nWorkflow so far: ${JSON.stringify(siblings.map(s => ({ node: s.node, kind: s.kind, status: s.status })))}\nQuestion: ${question}\nAnswer in 1-3 sentences, grounded only in the step data above. Say honestly if the data doesn't cover it.`;
   let answer;
   if (MOCK) {
-    answer = `Step “${node.node}” (${node.kind}) ran for ${node.duration_ms ?? '?'}ms and ended “${node.status}”. Input: ${JSON.stringify(node.input ? JSON.parse(node.input) : null)?.slice(0, 120)}. Output: ${JSON.stringify(node.output ? JSON.parse(node.output) : null)?.slice(0, 120)}. That's what the data shows.`;
+    answer = `Step “${node.node}” (${node.kind}) ran for ${node.duration_ms ?? '?'}ms and ended “${node.status}”. Input: ${JSON.stringify(safeJson(node.input))?.slice(0, 120)}. Output: ${JSON.stringify(safeJson(node.output))?.slice(0, 120)}. That's what the data shows.`;
   } else {
     const msg = await chat({ messages: [{ role: 'user', content: prompt }] });
     answer = msg.content;
