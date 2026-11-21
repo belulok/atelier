@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment for Late Checkout</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .amount {
+            text-align: center;
+            font-size: 24px;
+            margin: 20px 0;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .row {
+            display: flex;
+            gap: 15px;
+        }
+        .row .form-group {
+            flex: 1;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #6772e5;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #5469d4;
+        }
+        .error {
+            color: red;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Payment for Late Checkout</h1>
+        <p>Dear Lukas Weber (bk2),</p>
+        <p>Please pay the £20 fee for your late checkout.</p>
+        <div class="amount">Amount: £20.00</div>
+        <form id="payment-form">
+            <div class="form-group">
+                <label for="card-number">Card Number</label>
+                <input type="text" id="card-number" placeholder="1234 1234 1234 1234" required>
+            </div>
+            <div class="row">
+                <div class="form-group">
+                    <label for="expiry-date">Expiry Date</label>
+                    <input type="text" id="expiry-date" placeholder="MM/YY" required>
+                </div>
+                <div class="form-group">
+                    <label for="cvv">CVV</label>
+                    <input type="text" id="cvv" placeholder="123" required>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="name">Name on Card</label>
+                <input type="text" id="name" placeholder="Lukas Weber" required>
+            </div>
+            <button type="submit">Pay £20.00</button>
+        </form>
+    </div>
+
+    <script>
+        document.getElementById('payment-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            // TODO: Replace with actual Stripe integration or backend endpoint
+            // For now, this is a placeholder to show the form works
+            alert('Payment submitted! (This is a placeholder. Please implement actual payment processing.)');
+
+            // In a real implementation, you would send the card details to your backend
+            // which would then use Stripe or another payment processor to complete the transaction
+            // const cardNumber = document.getElementById('card-number').value;
+            // const expiryDate = document.getElementById('expiry-date').value;
+            // const cvv = document.getElementById('cvv').value;
+            // const name = document.getElementById('name').value;
+
+            // fetch('https://your-backend-endpoint.com/payments', {
+            //     method: 'POST',
+            //     headers: {
+            //         'Content-Type': 'application/json',
+            //     },
+            //     body: JSON.stringify({
+            //         cardNumber,
+            //         expiryDate,
+            //         cvv,
+            //         name,
+            //         amount: 2000, // £20 in pence
+            //     }),
+            // })
+            // .then(response => response.json())
+            // .then(data => {
+            //     console.log('Success:', data);
+            //     alert('Payment successful!');
+            // })
+            // .catch((error) => {
+            //     console.error('Error:', error);
+            //     alert('Payment failed. Please try again.');
+            // });
+        });
+    </script>
+</body>
+</html>
